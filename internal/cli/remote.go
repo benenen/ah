@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/benenen/ah/internal/sshclient"
 	"github.com/spf13/cobra"
@@ -31,7 +32,7 @@ func (a *app) sshOptions(cmd *cobra.Command) sshclient.Options {
 	return opts
 }
 func (a *app) connectCommand() *cobra.Command {
-	return &cobra.Command{Use: "connect NAME", Aliases: []string{"c"}, Short: "Open an interactive SSH shell", Args: cobra.ExactArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) (err error) {
+	cmd := &cobra.Command{Use: "connect NAME [COMMAND [ARG...]]", Aliases: []string{"c"}, Short: "Open an SSH shell or execute a remote command", Args: cobra.MinimumNArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) (err error) {
 		input, ok := cmd.InOrStdin().(*os.File)
 		if !ok {
 			return fmt.Errorf("connect requires terminal input")
@@ -45,6 +46,13 @@ func (a *app) connectCommand() *cobra.Command {
 			return err
 		}
 		defer func() { err = errors.Join(err, client.Close()) }()
+		if len(args) > 1 {
+			// OpenSSH sends a space-joined command for the remote shell to parse.
+			return client.Exec(strings.Join(args[1:], " "), input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		}
 		return client.Shell(input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	}}
+	// Options following NAME belong to the remote command, even if they match ah flags.
+	cmd.Flags().SetInterspersed(false)
+	return cmd
 }

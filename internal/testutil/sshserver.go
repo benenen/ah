@@ -33,16 +33,22 @@ type SSHServer struct {
 
 func StartSSH(t *testing.T) *SSHServer {
 	t.Helper()
-	return startSSH(t, nil)
+	return startSSH(t, nil, nil)
 }
 
 // StartPasswordSSH starts a server that accepts only the supplied password.
 func StartPasswordSSH(t *testing.T, password string) *SSHServer {
 	t.Helper()
-	return startSSH(t, &password)
+	return startSSH(t, &password, nil)
 }
 
-func startSSH(t *testing.T, password *string) *SSHServer {
+// StartCommandSSH accepts exec requests but refuses PTY requests.
+func StartCommandSSH(t *testing.T, handler func(string, ssh.Channel) uint32) *SSHServer {
+	t.Helper()
+	return startSSH(t, nil, handler)
+}
+
+func startSSH(t *testing.T, password *string, handler func(string, ssh.Channel) uint32) *SSHServer {
 	t.Helper()
 	root := t.TempDir()
 	_, hostKey, err := ed25519.GenerateKey(rand.Reader)
@@ -113,14 +119,14 @@ func startSSH(t *testing.T, password *string) *SSHServer {
 			f.conns[conn] = true
 			f.wg.Add(1)
 			f.mu.Unlock()
-			go f.serve(conn, cfg)
+			go f.serve(conn, cfg, handler)
 		}
 	}()
 	t.Cleanup(f.Close)
 	return f
 }
 
-func (f *SSHServer) serve(conn net.Conn, cfg *ssh.ServerConfig) {
+func (f *SSHServer) serve(conn net.Conn, cfg *ssh.ServerConfig, handler func(string, ssh.Channel) uint32) {
 	defer f.wg.Done()
 	defer conn.Close()
 	defer func() { f.mu.Lock(); delete(f.conns, conn); f.mu.Unlock() }()
@@ -146,6 +152,13 @@ func (f *SSHServer) serve(conn net.Conn, cfg *ssh.ServerConfig) {
 			defer sessions.Done()
 			defer channel.Close()
 			for req := range requests {
+				var command struct{ Command string }
+				if req.Type == "exec" && handler != nil && ssh.Unmarshal(req.Payload, &command) == nil {
+					req.Reply(true, nil)
+					code := handler(command.Command, channel)
+					channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{code}))
+					return
+				}
 				var subsystem struct{ Name string }
 				if req.Type == "subsystem" && ssh.Unmarshal(req.Payload, &subsystem) == nil && subsystem.Name == "sftp" {
 					req.Reply(true, nil)

@@ -30,7 +30,18 @@ ah c A                  # 打开交互 SSH 命令行
 ah connect A                 # 等价命令
 ```
 
-`ah c <name>` 是 `connect` 的别名，使用已保存的连接配置打开交互 SSH 命令行，同样支持连接名 Tab 补全及全局认证选项。
+`ah c <name>` 是 `connect` 的别名。不带命令时打开交互 SSH 终端，带命令时执行远程命令后退出：
+
+```sh
+ah c nas ls -lah /home
+ah connect nas 'cd /home && ls -lah | head -20'
+printf 'hello\n' | ah c nas cat
+ah --timeout 15s c nas uname -a
+```
+
+与 SSH 一样，连接名后的参数用空格连接后交给远程 shell 解析；包含管道、重定向或需要保留的引号时，用引号包住完整远程命令。`ah` 的全局选项须放在连接名前，连接名后的 `--help` 等选项也属于远程命令。
+
+远程命令模式不申请 PTY，支持标准输入管道，分别转发 stdout/stderr，并保留远端非零退出码。连接名 Tab 补全和原有认证选项继续可用。
 
 连接别名只允许字母、数字、下划线和连字符，首字符必须为字母或数字。`new` 要求 host 和 user；`edit` 只修改明确传入的字段。`rm` 仅删除连接配置。
 

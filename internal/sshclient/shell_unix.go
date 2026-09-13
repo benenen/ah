@@ -16,7 +16,17 @@ import (
 
 // Shell runs a remote shell, requesting a PTY only when stdin is a terminal.
 // It consumes the connection and closes its transport when the shell ends.
-func (c *Client) Shell(stdin *os.File, stdout, stderr io.Writer) (result error) {
+func (c *Client) Shell(stdin *os.File, stdout, stderr io.Writer) error {
+	return c.runSession("", true, stdin, stdout, stderr)
+}
+
+// Exec sends a command to the remote shell without requesting a PTY.
+// Like Shell, it consumes and closes the connection and stops pending input reads.
+func (c *Client) Exec(command string, stdin *os.File, stdout, stderr io.Writer) error {
+	return c.runSession(command, false, stdin, stdout, stderr)
+}
+
+func (c *Client) runSession(command string, interactive bool, stdin *os.File, stdout, stderr io.Writer) (result error) {
 	session, err := c.client.NewSession()
 	if err != nil {
 		return err
@@ -38,7 +48,7 @@ func (c *Client) Shell(stdin *os.File, stdout, stderr io.Writer) (result error) 
 	}
 	session.Stdout = stdout
 	session.Stderr = stderr
-	if stdin != nil && term.IsTerminal(int(stdin.Fd())) {
+	if interactive && stdin != nil && term.IsTerminal(int(stdin.Fd())) {
 		fd := int(stdin.Fd())
 		width, height, err := term.GetSize(fd)
 		if err != nil {
@@ -76,7 +86,12 @@ func (c *Client) Shell(stdin *os.File, stdout, stderr io.Writer) (result error) 
 			}
 		}()
 	}
-	if err = session.Shell(); err != nil {
+	if interactive {
+		err = session.Shell()
+	} else {
+		err = session.Start(command)
+	}
+	if err != nil {
 		return err
 	}
 	return session.Wait()

@@ -20,7 +20,7 @@
 | `ah new <name>` | 新建连接，重复名称报错 |
 | `ah edit <name>` | 修改已有连接，校验成功后保存 |
 | `ah rm <name>` | 删除配置中的连接记录，名称不存在时报错 |
-| `ah connect <name>` / `ah c <name>` | 使用保存的配置建立交互 SSH 会话，两者等价并支持连接名补全 |
+| `ah connect <name> [COMMAND [ARG...]]` / `ah c <name> [COMMAND [ARG...]]` | 无命令时交互登录；带命令时执行远程命令并退出，两者等价并支持连接名补全 |
 | `ah cp A:/source/file B:/target/file` | 从 A 经 SFTP 读取，并经 SFTP 写入 B |
 | `ah completion <shell>` | 输出 shell 补全脚本，首批覆盖 Bash、Zsh |
 
@@ -64,3 +64,7 @@ user = "bob"
 传输前持久化 running，完成后更新 success/failed/canceled，保存路径、cwd、配置路径、时间、字节数、force 和错误，不记录密码或密钥内容。不能持久化时不开始传输；崩溃可能保留 running。本地目标不得覆盖当前历史库及 sidecar。
 `history [关键词...]` / `history search` 大小写不敏感、多关键词 AND 子串搜索，--limit 默认 20。
 `history show ID` 输出安全引用且保留原工作目录的命令；`history run ID` 使用结构化参数重跑并另记历史，不执行 shell 文本。保留原 cwd/force/配置路径，使用当前连接定义，显式全局配置选项可覆盖记录路径。
+
+## 远程命令契约
+
+连接名后的参数按 SSH 方式用空格连接，交给远程 shell 解析；ah 自身选项必须位于连接名前，之后的选项属于远程命令。命令模式不申请 PTY、不将本地终端改为 raw，转发 stdin/stdout/stderr，保留远程退出码；完成或取消时停止输入转发并关闭连接，保留调用方 stdin。无命令时维持既有交互终端行为。
