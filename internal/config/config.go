@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/benenen/ah/internal/credentials"
 	"github.com/gofrs/flock"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -22,6 +23,7 @@ type Connection struct {
 	Port         int    `toml:"port"`
 	User         string `toml:"user"`
 	IdentityFile string `toml:"identity_file,omitempty"`
+	Password     string `toml:"password,omitempty"`
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
@@ -34,6 +36,11 @@ func ValidateName(name string) error {
 }
 
 func (c Connection) Validate() error {
+	if c.Password != "" {
+		if err := credentials.Validate(c.Password); err != nil {
+			return fmt.Errorf("invalid encrypted password: %w", err)
+		}
+	}
 	invalidText := func(s string) bool {
 		return strings.ContainsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
 	}

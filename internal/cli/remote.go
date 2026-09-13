@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/benenen/ah/internal/sshclient"
-	"github.com/benenen/ah/internal/transfer"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -32,7 +31,7 @@ func (a *app) sshOptions(cmd *cobra.Command) sshclient.Options {
 	return opts
 }
 func (a *app) connectCommand() *cobra.Command {
-	return &cobra.Command{Use: "connect NAME", Short: "Open an interactive SSH shell", Args: cobra.ExactArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) (err error) {
+	return &cobra.Command{Use: "connect NAME", Aliases: []string{"c"}, Short: "Open an interactive SSH shell", Args: cobra.ExactArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) (err error) {
 		input, ok := cmd.InOrStdin().(*os.File)
 		if !ok {
 			return fmt.Errorf("connect requires terminal input")
@@ -41,60 +40,11 @@ func (a *app) connectCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		client, err := sshclient.Dial(cmd.Context(), c, a.sshOptions(cmd))
+		client, err := sshclient.Dial(cmd.Context(), c, a.connectionSSHOptions(cmd, args[0], c, true))
 		if err != nil {
 			return err
 		}
 		defer func() { err = errors.Join(err, client.Close()) }()
 		return client.Shell(input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	}}
-}
-func (a *app) copyCommand() *cobra.Command {
-	var force bool
-	cmd := &cobra.Command{Use: "cp SOURCE:PATH DESTINATION:PATH", Short: "Copy a regular file between two saved connections using SFTP", Args: cobra.ExactArgs(2), ValidArgsFunction: a.completeRemote, RunE: func(cmd *cobra.Command, args []string) (err error) {
-		source, err := transfer.ParseEndpoint(args[0])
-		if err != nil {
-			return err
-		}
-		target, err := transfer.ParseEndpoint(args[1])
-		if err != nil {
-			return err
-		}
-		sourceConn, err := a.connection(source.Name)
-		if err != nil {
-			return err
-		}
-		targetConn, err := a.connection(target.Name)
-		if err != nil {
-			return err
-		}
-		src, err := sshclient.Dial(cmd.Context(), sourceConn, a.sshOptions(cmd))
-		if err != nil {
-			return fmt.Errorf("source %s: %w", source.Name, err)
-		}
-		defer src.Close()
-		dst, err := sshclient.Dial(cmd.Context(), targetConn, a.sshOptions(cmd))
-		if err != nil {
-			return fmt.Errorf("destination %s: %w", target.Name, err)
-		}
-		defer dst.Close()
-		srcSFTP, err := src.SFTP()
-		if err != nil {
-			return fmt.Errorf("source SFTP: %w", err)
-		}
-		defer srcSFTP.Close()
-		dstSFTP, err := dst.SFTP()
-		if err != nil {
-			return fmt.Errorf("destination SFTP: %w", err)
-		}
-		defer dstSFTP.Close()
-		n, err := transfer.Copy(cmd.Context(), srcSFTP, dstSFTP, source.Path, target.Path, force)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Copied %d bytes: %s -> %s\n", n, args[0], args[1])
-		return err
-	}}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "atomically replace an existing destination file")
-	return cmd
 }

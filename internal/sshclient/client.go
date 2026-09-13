@@ -22,8 +22,9 @@ import (
 )
 
 type Options struct {
-	KnownHosts string
-	Timeout    time.Duration
+	PasswordOnly bool
+	KnownHosts   string
+	Timeout      time.Duration
 	// Callbacks run synchronously and must arrange their own cancellation.
 	Password   func() (string, error)
 	Passphrase func(string) ([]byte, error)
@@ -124,6 +125,12 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 }
 
 func authentication(ctx context.Context, c config.Connection, opts Options) ([]ssh.AuthMethod, net.Conn, error) {
+	if opts.PasswordOnly {
+		if opts.Password == nil {
+			return nil, nil, fmt.Errorf("password authentication requires a password")
+		}
+		return []ssh.AuthMethod{ssh.PasswordCallback(opts.Password)}, nil, nil
+	}
 	var methods []ssh.AuthMethod
 	var allSigners []ssh.Signer
 	var agentSigners []ssh.Signer

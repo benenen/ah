@@ -12,6 +12,8 @@ import (
 
 type app struct {
 	configPath   string
+	historyPath  string
+	keyPath      string
 	knownHosts   string
 	timeout      time.Duration
 	trustNewHost bool
@@ -21,6 +23,8 @@ func New() *cobra.Command {
 	a := &app{}
 	root := &cobra.Command{Use: "ah", Short: "Manage SSH connections and copy files between them", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentFlags().StringVar(&a.configPath, "config", "", "connection TOML file (default: user config directory/ah/connections.toml)")
+	root.PersistentFlags().StringVar(&a.historyPath, "history-file", "", "copy history SQLite file (default: user config directory/ah/history.db)")
+	root.PersistentFlags().StringVar(&a.keyPath, "key-file", "", "password encryption key file (default: user config directory/ah/master.key)")
 	root.PersistentFlags().StringVar(&a.knownHosts, "known-hosts", "", "SSH known_hosts file (default: ~/.ssh/known_hosts)")
 	root.PersistentFlags().DurationVar(&a.timeout, "timeout", 10*time.Second, "SSH connection and handshake timeout")
 	root.PersistentFlags().BoolVar(&a.trustNewHost, "trust-new-host", false, "explicitly trust and save previously unknown host keys (changed keys still fail)")
@@ -30,7 +34,7 @@ func New() *cobra.Command {
 		}
 		return nil
 	}
-	root.AddCommand(a.listCommand(), a.newCommand(), a.editCommand(), a.removeCommand(), a.connectCommand(), a.copyCommand(), completionCommand())
+	root.AddCommand(a.listCommand(), a.newCommand(), a.editCommand(), a.removeCommand(), a.connectCommand(), a.copyCommand(), a.historyCommand(), completionCommand())
 	root.CompletionOptions.DisableDefaultCmd = true
 	return root
 }

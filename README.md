@@ -1,15 +1,15 @@
 # ah
 
-Go 编写的 SSH 连接管理 CLI。使用 TOML 保存命名连接，通过 SFTP 在两台远程主机间复制文件，并支持 Bash/Zsh 远程路径 Tab 补全。
+Go 编写的 SSH 连接管理 CLI。使用 TOML 保存命名连接，支持本地与远端文件互传、Bash/Zsh 路径 Tab 补全，并使用 SQLite 保存可查询、可重跑的复制历史。
 
 ## 安装
 
 需要 Go 1.26 或更新版本。交互终端支持 macOS、Linux。
 
 ```sh
-go build -o bin/ah ./cmd/ah
+make build
 # 或安装到 $(go env GOPATH)/bin：
-go install ./cmd/ah
+make install
 ```
 
 后续示例假设 `ah` 已加入 PATH。
@@ -18,13 +18,19 @@ go install ./cmd/ah
 
 ```sh
 ah new A --host a.example.com --user alice --identity-file ~/.ssh/id_ed25519
-ah new B --host b.example.com --user bob --port 2222
+ah new B --host b.example.com --user bob --port 2222 --password
+# 隐藏输入密码，加密保存；new 只保存配置，不要求主机在线。
 ah list
 ah edit B --host new-b.example.com --port 22
+ah edit B --password         # 更新保存的密码
+ah edit B --clear-password   # 删除保存的密码
 ah edit A --identity-file ''   # 清除显式密钥，使用 agent / 默认密钥
 ah rm B
-ah connect A
+ah c A                  # 打开交互 SSH 命令行
+ah connect A                 # 等价命令
 ```
+
+`ah c <name>` 是 `connect` 的别名，使用已保存的连接配置打开交互 SSH 命令行，同样支持连接名 Tab 补全及全局认证选项。
 
 连接别名只允许字母、数字、下划线和连字符，首字符必须为字母或数字。`new` 要求 host 和 user；`edit` 只修改明确传入的字段。`rm` 仅删除连接配置。
 
@@ -49,7 +55,8 @@ user = "bob"
 
 - 支持显式私钥、`SSH_AUTH_SOCK` agent，以及默认的 `~/.ssh/id_ed25519`、`~/.ssh/id_rsa`。
 - 已解锁的显式加密密钥可以从 agent 使用；否则在交互终端输入私钥口令。密钥认证失败后，可按服务端认证方式提示输入密码。
-- 密码和口令不写入 TOML。自动化和 Tab 补全使用无需提示的密钥或已解锁 agent。
+- `new/edit --password` 隐藏输入 SSH 密码，以 AES-256-GCM 加密后写入 TOML 的 `password` 字段（`enc:v1:` 格式）；保存的密码用于 `connect/c/cp` 和远程补全，并优先于密钥认证。普通连接时临时输入的密码和私钥口令不会保存。
+- 加密主密钥独立保存在 `os.UserConfigDir()/ah/master.key`，可用 `--key-file` 指定。首次保存密码时随机生成，文件权限为 0600；解密时缺失密钥会报错，不会重新生成。备份和迁移时需要同时保管 TOML 与对应密钥，丢失密钥后须重新设置密码。拿到两者的人可以解密，因此密钥应单独妥善保管。
 - 默认校验 `~/.ssh/known_hosts`；`--known-hosts /path/known_hosts` 可覆盖。
 - 未知主机默认拒绝。先按自己的可信渠道核验主机指纹，再显式使用 `--trust-new-host` 接受并记录首次见到的密钥；已有主机密钥发生变化时仍拒绝。该选项不使补全操作写入信任记录。
 
@@ -60,21 +67,40 @@ ah --known-hosts ./test-known-hosts --timeout 15s connect A
 
 `--timeout` 默认 10 秒，约束认证、连接与握手阶段；不会给整次文件传输设置总时长上限。Ctrl-C 可取消复制或密码输入；交互 SSH 中 Ctrl-C 发送给远端终端。
 
-## 远程复制
+## 文件复制
 
 ```sh
+ah cp ./README.md nas:/home/       # 本地上传
+ah cp nas:/home/report.csv ./      # 下载到本地
+ah cp ./report.csv ./backup.csv   # 本地复制
 ah cp A:/var/data/report.csv B:/home/bob/report.csv
 ah cp 'A:~/reports/季度 报告.csv' B:~/uploads/
 ah cp --force A:~/report.csv B:~/report.csv
 ```
 
-两端分别建立 SSH/SFTP 连接，文件流经运行 ah 的机器，无需 A 能直接连接 B。目标为已有目录时使用源文件名；目标父目录须已存在。`~` 表示该连接的 SFTP 登录目录；不支持 `~otheruser`。
+没有 `NAME:` 前缀的路径表示本地文件，相对路径按执行目录解析；文件名含冒号时可使用 `./name:part` 避免被识别为连接别名。本地 `~` 表示本机用户目录。远端到远端时，两端分别建立 SSH/SFTP 连接，文件流经运行 ah 的机器，无需 A 能直接连接 B。目标为已有目录时使用源文件名；目标父目录须已存在。远端 `~` 表示该连接的 SFTP 登录目录；不支持 `~otheruser`。
 
-默认拒绝覆盖，采用同目录临时文件与 `hardlink@openssh.com` 扩展原子发布，防止并发创建时覆盖目标。`--force` 使用 `posix-rename@openssh.com` 原子替换。目标服务端不支持对应扩展时明确报错。目标最终权限取源文件的普通 Unix 权限位；不复制属主、时间戳或 ACL。
+默认拒绝覆盖，采用同目录临时文件与 `hardlink@openssh.com` 扩展原子发布，防止并发创建时覆盖目标。`--force` 使用 `posix-rename@openssh.com` 原子替换。目标服务端不支持对应扩展时明确报错。本地目标使用对应的本地硬链接或原子重命名。目标最终权限取源文件的普通 Unix 权限位；不复制属主、时间戳或 ACL。
 
 复制失败不报告成功；能连通时清理临时文件。断线或取消导致无法清理时，错误会指出可能残留的 `.ah-copy-*` 路径。传输完成但发布响应丢失时，目标可能已经存在，应检查目标后再重试。
 
-当前支持单个普通文件；目录递归、本地端点、跳板机和断点续传尚未实现。
+当前支持单个普通文件；目录递归、跳板机和断点续传尚未实现。
+
+## 复制历史
+
+```sh
+ah history                     # 最近 20 条
+ah history README nas          # 多个关键词同时匹配，不区分大小写
+ah history search report --limit 50
+ah history show 12             # 输出可复制的 shell 命令
+ah history run 12              # 重跑，生成新的历史记录
+```
+
+历史默认保存在 `os.UserConfigDir()/ah/history.db`，可用全局 `--history-file /path/history.db` 覆盖。SQLite 文件权限为 0600，记录源/目标、执行目录、配置路径、开始/结束时间、字节数、覆盖选项、状态与错误；不保存密码或密钥内容。查询支持路径、状态和错误的关键词子串匹配。
+
+每次参数数量正确的 `cp` 在传输前记为 `running`，结束后更新为 `success`、`failed` 或 `canceled`；进程被强制终止时可能保留 `running`。无法打开或写入历史时不会开始复制。本地目标不能覆盖当前历史数据库及其 SQLite 辅助文件。
+
+重跑沿用原来的工作目录、覆盖选项和配置/主密钥/known_hosts 路径，连接定义使用该配置文件中的当前值；可通过全局选项显式覆盖配置路径。`history run` 直接调用复制逻辑，不执行数据库中的 shell 文本。原记录未使用 `--force` 时，重跑也会拒绝覆盖已有目标。首次主机信任授权不会保存在历史中。
 
 ## Tab 补全
 
@@ -92,7 +118,9 @@ source <(ah completion zsh)
 可将对应命令写入 `~/.bashrc` 或 `~/.zshrc`。Bash 脚本包含未安装 bash-completion 时的兼容逻辑；Zsh 使用自带的 compinit。
 
 ```text
-ah connect <Tab>             # 连接名
+ah c <Tab>                  # 连接名
+ah cp ./REA<Tab>             # 本地源路径
+ah cp A:~/report.csv ./ba<Tab> # 本地目标路径
 ah cp A:<Tab>               # A 的登录目录
 ah cp A:~/rep<Tab>           # A 的远程源路径
 ah cp A:~/report.csv B:~/u<Tab>  # B 的远程目标路径
@@ -103,11 +131,16 @@ ah cp A:~/report.csv B:~/u<Tab>  # B 的远程目标路径
 ## 开发与验证
 
 ```sh
-go test ./...
-go vet ./...
-go test -race ./...
-go build ./...
+make help                  # 查看可用目标
+make                       # 默认构建 bin/ah
+make run ARGS="c A"         # 构建并连接 A
+make fmt                   # 格式化
+make check                 # 构建、静态检查和全部测试
+make test-race             # 竞态检测
+make clean                 # 清理构建产物
 ```
+
+也可以直接使用 `go build -o bin/ah ./cmd/ah`、`go install ./cmd/ah`、`go test ./...` 等 Go 命令。
 
 测试启动本地 SSH/SFTP 服务，使用临时密钥和配置；Bash/Zsh 测试在隔离的伪终端中实际按 Tab 并复制含特殊字符的文件。缺少对应 shell 时跳过该 shell 测试。
 

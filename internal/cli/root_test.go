@@ -19,6 +19,15 @@ func execute(t *testing.T, args ...string) (string, error) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetIn(strings.NewReader(""))
+	hasHistory := false
+	for _, arg := range args {
+		if arg == "--history-file" || strings.HasPrefix(arg, "--history-file=") {
+			hasHistory = true
+		}
+	}
+	if !hasHistory {
+		args = append([]string{"--history-file", filepath.Join(t.TempDir(), "history.db")}, args...)
+	}
 	cmd.SetArgs(args)
 	err := cmd.ExecuteContext(context.Background())
 	return out.String(), err
@@ -104,6 +113,7 @@ func TestCPAndBothRemoteCompletionPositions(t *testing.T) {
 		{[]string{"__complete", "cp", "A:~/a"}, "A:~/a file中文.txt"},
 		{[]string{"__complete", "cp", "A:~/a file中文.txt", "B:~/d"}, "B:~/destination/"},
 		{[]string{"__complete", "cp", ""}, "A:"},
+		{[]string{"__complete", "c", "A"}, "A\n"},
 	} {
 		out, err := run(tc.args...)
 		if err != nil || !strings.Contains(out, tc.want) {

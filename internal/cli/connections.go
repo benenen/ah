@@ -35,6 +35,7 @@ func connectionFlags(cmd *cobra.Command, c *config.Connection) {
 }
 func (a *app) newCommand() *cobra.Command {
 	var c config.Connection
+	var password bool
 	cmd := &cobra.Command{Use: "new NAME --host HOST --user USER", Short: "Save a new connection", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.ValidateName(args[0]); err != nil {
 			return err
@@ -45,6 +46,19 @@ func (a *app) newCommand() *cobra.Command {
 		s, err := a.store()
 		if err != nil {
 			return err
+		}
+		existing, err := s.Load()
+		if err != nil {
+			return err
+		}
+		if _, ok := existing[args[0]]; ok {
+			return fmt.Errorf("connection %q already exists", args[0])
+		}
+		if password {
+			c.Password, err = a.promptPassword(cmd, args[0])
+			if err != nil {
+				return err
+			}
 		}
 		if err = s.Update(cmd.Context(), func(m map[string]config.Connection) error {
 			if _, ok := m[args[0]]; ok {
@@ -59,14 +73,30 @@ func (a *app) newCommand() *cobra.Command {
 		return err
 	}}
 	connectionFlags(cmd, &c)
+	cmd.Flags().BoolVar(&password, "password", false, "prompt for a password and save it encrypted in TOML")
 	return cmd
 }
 func (a *app) editCommand() *cobra.Command {
 	var changes config.Connection
+	var password, clearPassword bool
 	cmd := &cobra.Command{Use: "edit NAME [flags]", Short: "Update only the supplied connection fields", Args: cobra.ExactArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := a.store()
 		if err != nil {
 			return err
+		}
+		existing, err := s.Load()
+		if err != nil {
+			return err
+		}
+		if _, ok := existing[args[0]]; !ok {
+			return fmt.Errorf("connection %q does not exist", args[0])
+		}
+		encrypted := ""
+		if password {
+			encrypted, err = a.promptPassword(cmd, args[0])
+			if err != nil {
+				return err
+			}
 		}
 		if err = s.Update(cmd.Context(), func(m map[string]config.Connection) error {
 			c, ok := m[args[0]]
@@ -85,6 +115,12 @@ func (a *app) editCommand() *cobra.Command {
 			if cmd.Flags().Changed("identity-file") {
 				c.IdentityFile = changes.IdentityFile
 			}
+			if password {
+				c.Password = encrypted
+			}
+			if clearPassword {
+				c.Password = ""
+			}
 			if err := c.Validate(); err != nil {
 				return err
 			}
@@ -97,6 +133,9 @@ func (a *app) editCommand() *cobra.Command {
 		return err
 	}}
 	connectionFlags(cmd, &changes)
+	cmd.Flags().BoolVar(&password, "password", false, "prompt for a replacement password and save it encrypted")
+	cmd.Flags().BoolVar(&clearPassword, "clear-password", false, "remove the saved encrypted password")
+	cmd.MarkFlagsMutuallyExclusive("password", "clear-password")
 	return cmd
 }
 func (a *app) removeCommand() *cobra.Command {

@@ -315,3 +315,35 @@ func TestImplicitPassphraseCancellationPropagates(t *testing.T) {
 		})
 	}
 }
+
+func TestPasswordOnlySkipsLocalIdentities(t *testing.T) {
+	f := testutil.StartPasswordSSH(t, "fixture-password")
+	connection := f.Connection
+	connection.IdentityFile = filepath.Join(t.TempDir(), "missing-key")
+	for _, password := range []string{"wrong-password", "fixture-password"} {
+		t.Run(password, func(t *testing.T) {
+			client, err := sshclient.Dial(context.Background(), connection, sshclient.Options{
+				KnownHosts: f.KnownHosts, PasswordOnly: true, Password: func() (string, error) { return password, nil },
+			})
+			if password == "wrong-password" {
+				if err == nil {
+					client.Close()
+					t.Fatal("wrong password accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			s, err := client.SFTP()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			if wd, err := s.Getwd(); err != nil || wd != f.Root {
+				t.Fatalf("password connection unusable: %q %v", wd, err)
+			}
+		})
+	}
+}

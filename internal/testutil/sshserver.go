@@ -33,6 +33,17 @@ type SSHServer struct {
 
 func StartSSH(t *testing.T) *SSHServer {
 	t.Helper()
+	return startSSH(t, nil)
+}
+
+// StartPasswordSSH starts a server that accepts only the supplied password.
+func StartPasswordSSH(t *testing.T, password string) *SSHServer {
+	t.Helper()
+	return startSSH(t, &password)
+}
+
+func startSSH(t *testing.T, password *string) *SSHServer {
+	t.Helper()
 	root := t.TempDir()
 	_, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -64,6 +75,15 @@ func StartSSH(t *testing.T) *SSHServer {
 		}
 		return nil, nil
 	}}
+	if password != nil {
+		cfg.PublicKeyCallback = nil
+		cfg.PasswordCallback = func(_ ssh.ConnMetadata, supplied []byte) (*ssh.Permissions, error) {
+			if string(supplied) != *password {
+				return nil, os.ErrPermission
+			}
+			return nil, nil
+		}
+	}
 	cfg.AddHostKey(hostSigner)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

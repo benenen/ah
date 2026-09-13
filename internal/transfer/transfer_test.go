@@ -33,7 +33,7 @@ func localSFTP(t *testing.T) *sftp.Client {
 }
 
 func TestParseEndpoint(t *testing.T) {
-	for _, s := range []string{"", "A", "A:", ":/tmp", "bad name:/tmp", "A:/a\nfile"} {
+	for _, s := range []string{"", "A:", ":/tmp", "bad name:/tmp", "A:/a\nfile"} {
 		if _, err := ParseEndpoint(s); err == nil {
 			t.Errorf("accepted invalid endpoint %q", s)
 		}
@@ -157,6 +157,16 @@ func TestConcurrentCopyDoesNotClobber(t *testing.T) {
 
 // A server that stops responding must not pin the copy after cancellation.
 func TestCopyCancellationUnblocksRemoteIO(t *testing.T) {
+	for _, localDestination := range []bool{false, true} {
+		name := "remote-destination"
+		if localDestination {
+			name = "local-destination"
+		}
+		t.Run(name, func(t *testing.T) { testCopyCancellationUnblocksRemoteIO(t, localDestination) })
+	}
+}
+
+func testCopyCancellationUnblocksRemoteIO(t *testing.T, localDestination bool) {
 	a, b := net.Pipe()
 	gate := &gatedConnection{Conn: a, started: make(chan struct{}), release: make(chan struct{})}
 	server, err := sftp.NewServer(gate)
@@ -170,7 +180,10 @@ func TestCopyCancellationUnblocksRemoteIO(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { close(gate.release); _ = src.Close(); _ = a.Close(); _ = b.Close(); <-serverDone })
-	dst := localSFTP(t)
+	var dst *sftp.Client
+	if !localDestination {
+		dst = localSFTP(t)
+	}
 	source := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(source, []byte("data"), 0600); err != nil {
 		t.Fatal(err)
@@ -209,4 +222,121 @@ func (c *gatedConnection) Write(p []byte) (int, error) {
 		<-c.release
 	}
 	return c.Conn.Write(p)
+}
+
+func TestLocalEndpointParsing(t *testing.T) {
+	for _, value := range []string{"README.md", "A", "./foo:bar", "../foo:bar", "/tmp/foo:bar", "~/foo:bar", "中文 文件"} {
+		got, err := ParseEndpoint(value)
+		if err != nil || got.Name != "" || got.Path != value {
+			t.Fatalf("%q: %+v %v", value, got, err)
+		}
+	}
+}
+
+func TestCopyLocalEndpoints(t *testing.T) {
+	for _, mode := range []string{"local-local", "local-remote", "remote-local"} {
+		t.Run(mode, func(t *testing.T) {
+			var src, dst *sftp.Client
+			if mode == "local-remote" {
+				dst = localSFTP(t)
+			}
+			if mode == "remote-local" {
+				src = localSFTP(t)
+			}
+			dir := t.TempDir()
+			source, target := filepath.Join(dir, "中文 源:文件"), filepath.Join(dir, "目标")
+			if err := os.Mkdir(target, 0700); err != nil {
+				t.Fatal(err)
+			}
+			data := strings.Repeat("字节\x00", 50000)
+			if err := os.WriteFile(source, []byte(data), 0640); err != nil {
+				t.Fatal(err)
+			}
+			n, err := Copy(context.Background(), src, dst, source, target, false)
+			if err != nil || n != int64(len(data)) {
+				t.Fatalf("copy %d %v", n, err)
+			}
+			out := filepath.Join(target, filepath.Base(source))
+			got, err := os.ReadFile(out)
+			if err != nil || string(got) != data {
+				t.Fatalf("corrupt copy: %v", err)
+			}
+			if err := os.WriteFile(source, []byte("replacement"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Copy(context.Background(), src, dst, source, target, false); err == nil {
+				t.Fatal("clobbered")
+			}
+			got, _ = os.ReadFile(out)
+			if string(got) != data {
+				t.Fatal("refusal changed output")
+			}
+			if _, err := Copy(context.Background(), src, dst, source, target, true); err != nil {
+				t.Fatal(err)
+			}
+			got, _ = os.ReadFile(out)
+			if string(got) != "replacement" {
+				t.Fatal("force failed")
+			}
+			entries, _ := os.ReadDir(target)
+			if len(entries) != 1 {
+				t.Fatalf("leaked staging files: %v", entries)
+			}
+			if _, err := Copy(context.Background(), src, dst, dir, out, true); err == nil {
+				t.Fatal("accepted directory")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if _, err := Copy(ctx, src, dst, source, out, true); !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancel: %v", err)
+			}
+		})
+	}
+}
+
+func TestResolveLocalPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	relative, err := filepath.Abs("./中文 文件")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for input, want := range map[string]string{"~": home, "~/中文 文件": filepath.Join(home, "中文 文件"), "./中文 文件": relative, home: home} {
+		got, err := ResolveLocalPath(input)
+		if err != nil || got != want {
+			t.Fatalf("%q => %q, %v; want %q", input, got, err, want)
+		}
+	}
+	for _, input := range []string{"", "~someone/file", "file\nname"} {
+		if _, err := ResolveLocalPath(input); err == nil {
+			t.Fatalf("accepted %q", input)
+		}
+	}
+}
+
+func TestConcurrentLocalCopyDoesNotClobber(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	results := make(chan error, 2)
+	start := make(chan struct{})
+	for _, data := range []string{strings.Repeat("one", 100000), strings.Repeat("two", 100000)} {
+		source := filepath.Join(dir, data[:3])
+		if err := os.WriteFile(source, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		go func() { <-start; _, err := Copy(context.Background(), nil, nil, source, target, false); results <- err }()
+	}
+	close(start)
+	first, second := <-results, <-results
+	if (first == nil) == (second == nil) {
+		t.Fatalf("want one publisher: %v / %v", first, second)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || (string(got) != strings.Repeat("one", 100000) && string(got) != strings.Repeat("two", 100000)) {
+		t.Fatalf("corrupt result: %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 3 {
+		t.Fatalf("staging leaked: %v", entries)
+	}
 }

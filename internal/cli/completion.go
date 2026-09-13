@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/benenen/ah/internal/config"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,12 +37,23 @@ func (a *app) completeRemote(cmd *cobra.Command, args []string, partial string) 
 		return nil, directive
 	}
 	name, p, remote := strings.Cut(partial, ":")
-	if !remote {
-		names, _ := a.completeNames(cmd, nil, name)
+	if !remote || config.ValidateName(name) != nil {
+		names, _ := a.completeNames(cmd, nil, partial)
 		for i := range names {
 			names[i] += ":"
+			directive |= cobra.ShellCompDirectiveNoSpace
 		}
-		return names, directive | cobra.ShellCompDirectiveNoSpace
+		local, err := completion.LocalPaths(partial)
+		if err == nil {
+			for _, candidate := range local {
+				if strings.HasSuffix(candidate, "/") {
+					directive |= cobra.ShellCompDirectiveNoSpace
+				}
+			}
+			names = append(names, local...)
+		}
+		sort.Strings(names)
+		return names, directive
 	}
 	c, err := a.connection(name)
 	if err != nil {
@@ -53,7 +66,9 @@ func (a *app) completeRemote(cmd *cobra.Command, args []string, partial string) 
 	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 	defer cancel()
 	// No callbacks: pressing Tab must never prompt, save host keys or echo diagnostics.
-	client, err := sshclient.Dial(ctx, c, sshclient.Options{KnownHosts: a.knownHosts, Timeout: timeout})
+	opts := a.connectionSSHOptions(cmd, name, c, false)
+	opts.Timeout = timeout
+	client, err := sshclient.Dial(ctx, c, opts)
 	if err != nil {
 		return nil, directive
 	}
