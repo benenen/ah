@@ -199,6 +199,16 @@ func TestValidation(t *testing.T) {
 	if err := (Connection{Host: "::1", Port: 22, User: "alice"}).Validate(); err != nil {
 		t.Fatal(err)
 	}
+	for _, proxy := range []string{"http://127.0.0.1:8080", "socks5://127.0.0.1", "socks5://:1080", "127.0.0.1:1080", "socks5://\x00:1"} {
+		if (Connection{Host: "a", Port: 22, User: "alice", Proxy: proxy}).Validate() == nil {
+			t.Errorf("accepted invalid proxy %q", proxy)
+		}
+	}
+	for _, proxy := range []string{"", "socks5://127.0.0.1:1080", "socks5h://host:1080", "socks5://user:pass@127.0.0.1:1080"} {
+		if err := (Connection{Host: "a", Port: 22, User: "alice", Proxy: proxy}).Validate(); err != nil {
+			t.Errorf("rejected valid proxy %q: %v", proxy, err)
+		}
+	}
 }
 
 func TestCancellationDuringUpdatePreservesOriginal(t *testing.T) {

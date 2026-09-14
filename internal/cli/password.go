@@ -83,15 +83,21 @@ func canonicalPasswordPath(path string) (string, error) {
 }
 
 func (a *app) promptPassword(cmd *cobra.Command, name string) (string, error) {
+	return a.promptSecret(cmd, name, "SSH password: ")
+}
+
+// promptSecret reads a secret from the terminal and returns it encrypted under
+// the connection name, sharing the interactive-only guard across password kinds.
+func (a *app) promptSecret(cmd *cobra.Command, name, prompt string) (string, error) {
 	input, ok := cmd.InOrStdin().(*os.File)
 	if !ok || !term.IsTerminal(int(input.Fd())) {
-		return "", fmt.Errorf("--password requires an interactive terminal")
+		return "", fmt.Errorf("saving a password requires an interactive terminal")
 	}
 	store, err := a.passwordStore()
 	if err != nil {
 		return "", err
 	}
-	secret, err := readSecret(cmd.Context(), input, cmd.ErrOrStderr(), fmt.Sprintf("SSH password: "))
+	secret, err := readSecret(cmd.Context(), input, cmd.ErrOrStderr(), prompt)
 	if err != nil {
 		return "", err
 	}
@@ -107,6 +113,7 @@ func (a *app) connectionSSHOptions(cmd *cobra.Command, name string, c config.Con
 	if interactive {
 		opts = a.sshOptions(cmd)
 	}
+	opts.Proxy = c.Proxy
 	if c.Password != "" {
 		opts.PasswordOnly = true
 		opts.Passphrase = nil

@@ -25,6 +25,14 @@ ah edit B --host new-b.example.com --port 22
 ah edit B --password         # 更新保存的密码
 ah edit B --clear-password   # 删除保存的密码
 ah edit A --identity-file ''   # 清除显式密钥，使用 agent / 默认密钥
+ah new P --host 10.0.0.9 --user dave --password --proxy socks5://127.0.0.1:1080
+# 经 SOCKS5 代理连接（含 connect/c、cp 与远程补全）；host 存目标真实地址。
+ah edit P --clear-proxy       # 取消代理，恢复直连
+ah new C --host c.example.com --user carol --password --sudo
+# 连接后自动 sudo 到 root；sudo 密码默认复用 SSH 密码。
+ah edit C --sudo-password     # 单独设置 sudo 密码（与 SSH 密码不同时）
+ah edit C --no-sudo           # 关闭自动 sudo
+ah edit C --clear-sudo-password   # 删除单独的 sudo 密码，回退到 SSH 密码
 ah rm B
 ah c A                  # 打开交互 SSH 命令行
 ah connect A                 # 等价命令
@@ -42,6 +50,8 @@ ah --timeout 15s c nas uname -a
 与 SSH 一样，连接名后的参数用空格连接后交给远程 shell 解析；包含管道、重定向或需要保留的引号时，用引号包住完整远程命令。`ah` 的全局选项须放在连接名前，连接名后的 `--help` 等选项也属于远程命令。
 
 远程命令模式不申请 PTY，支持标准输入管道，分别转发 stdout/stderr，并保留远端非零退出码。连接名 Tab 补全和原有认证选项继续可用。
+
+启用 `--sudo` 的连接会自动提权到 root：带命令时把命令包成 `sudo -S -p '' -- /bin/sh -c '<原命令>'`，先向远端 stdin 写入 sudo 密码行，因此管道数据仍完整交给命令、`&&`/管道等 shell 语义不变；不带命令的交互登录改用 `sudo -p '' -i`（不加 `-S`，让终端以关闭回显的方式读取密码，避免在屏幕上泄露）。sudo 密码优先取单独保存的 `sudo_password`，否则复用 SSH `password`；两者都没有时退化为 `sudo -n`，依赖服务端 NOPASSWD 配置。密码只经加密存取与远端 stdin 传递，不写入命令行或日志。
 
 连接别名只允许字母、数字、下划线和连字符，首字符必须为字母或数字。`new` 要求 host 和 user；`edit` 只修改明确传入的字段。`rm` 仅删除连接配置。
 
@@ -115,7 +125,9 @@ ah history run 12              # 重跑，生成新的历史记录
 
 ## Tab 补全
 
-为当前终端加载：
+**必须先加载补全脚本**，否则 `ah cp NAME:PATH<Tab>` 走的是 shell 默认文件名补全，不会提示远程路径。
+
+为当前终端临时加载：
 
 ```sh
 # Bash
@@ -126,7 +138,22 @@ autoload -Uz compinit && compinit
 source <(ah completion zsh)
 ```
 
-可将对应命令写入 `~/.bashrc` 或 `~/.zshrc`。Bash 脚本包含未安装 bash-completion 时的兼容逻辑；Zsh 使用自带的 compinit。
+永久启用（每次开终端自动加载），把对应片段写入 `~/.bashrc` 或 `~/.zshrc`：
+
+```sh
+# Bash（写入 ~/.bashrc）
+if command -v ah >/dev/null 2>&1; then
+    source <(ah completion bash)
+fi
+
+# Zsh（写入 ~/.zshrc）
+autoload -Uz compinit && compinit
+if command -v ah >/dev/null 2>&1; then
+    source <(ah completion zsh)
+fi
+```
+
+写入后新开终端，或在当前终端重新 `source` 上面的命令即可生效。Bash 脚本包含未安装 bash-completion 时的兼容逻辑，也能在装有 bash-completion（`COMP_WORDBREAKS` 含 `:`）时正确处理 `NAME:PATH` 的冒号；Zsh 使用自带的 compinit。
 
 ```text
 ah c <Tab>                  # 连接名

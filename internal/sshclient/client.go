@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,11 +20,13 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
+	"golang.org/x/net/proxy"
 )
 
 type Options struct {
 	PasswordOnly bool
 	KnownHosts   string
+	Proxy        string
 	Timeout      time.Duration
 	// Callbacks run synchronously and must arrange their own cancellation.
 	Password   func() (string, error)
@@ -37,6 +40,34 @@ type Client struct {
 	stop     func() bool
 	once     sync.Once
 	closeErr error
+}
+
+// dialTCP reaches address directly or, when opts.Proxy is set, through a SOCKS5
+// proxy. The forwarding dialer carries the timeout and the handshake context
+// bounds both the proxy hop and the target connect.
+func dialTCP(ctx context.Context, address string, opts Options) (net.Conn, error) {
+	forward := &net.Dialer{Timeout: opts.Timeout}
+	if opts.Proxy == "" {
+		return forward.DialContext(ctx, "tcp", address)
+	}
+	u, err := url.Parse(opts.Proxy)
+	if err != nil {
+		return nil, fmt.Errorf("invalid proxy URL: %w", err)
+	}
+	var auth *proxy.Auth
+	if u.User != nil {
+		pass, _ := u.User.Password()
+		auth = &proxy.Auth{User: u.User.Username(), Password: pass}
+	}
+	dialer, err := proxy.SOCKS5("tcp", u.Host, auth, forward)
+	if err != nil {
+		return nil, fmt.Errorf("configure proxy %s: %w", u.Host, err)
+	}
+	cd, ok := dialer.(proxy.ContextDialer)
+	if !ok {
+		return nil, fmt.Errorf("proxy dialer does not support cancellation")
+	}
+	return cd.DialContext(ctx, "tcp", address)
 }
 
 func expandHome(path string) (string, error) {
@@ -84,8 +115,7 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		defer agentStop()
 	}
 	address := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
-	dialer := net.Dialer{Timeout: opts.Timeout}
-	conn, err := dialer.DialContext(handshakeCtx, "tcp", address)
+	conn, err := dialTCP(handshakeCtx, address, opts)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", address, err)
 	}

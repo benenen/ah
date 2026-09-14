@@ -9,6 +9,7 @@ Go 1.26+；模块 github.com/benenen/ah，版本以 go.mod/go.sum 为准。
 - Cobra：命令与动态补全；Bash 脚本补充无 bash-completion 时的词法兼容逻辑。
 - go-toml/v2：严格 TOML 编解码；gofrs/flock：配置与 known_hosts 文件锁。
 - x/crypto/ssh：认证、会话和 known_hosts；pkg/sftp：目录查询与流式文件复制。
+- x/net/proxy：按连接的 SOCKS5 代理拨号，转发 dialer 携带超时、context 控制取消。
 - x/term、x/sys/unix：macOS/Linux 终端、窗口大小、可取消输入；creack/pty 用于测试。
 
 新增依赖前复用已有能力，核实官方文档兼容性并固定版本。底层不依赖 Cobra；密码输入与信任决策由 CLI 提供，补全不传交互回调，可提供保存密码的非交互解密回调。

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,6 +25,13 @@ type Connection struct {
 	User         string `toml:"user"`
 	IdentityFile string `toml:"identity_file,omitempty"`
 	Password     string `toml:"password,omitempty"`
+	// Sudo escalates remote commands and interactive shells to root via sudo.
+	Sudo bool `toml:"sudo,omitempty"`
+	// SudoPassword is an encrypted sudo password; when empty, Sudo reuses Password.
+	SudoPassword string `toml:"sudo_password,omitempty"`
+	// Proxy tunnels the SSH connection through a SOCKS5 proxy, e.g.
+	// "socks5://127.0.0.1:1080" or "socks5://user:pass@host:1080".
+	Proxy string `toml:"proxy,omitempty"`
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
@@ -41,6 +49,11 @@ func (c Connection) Validate() error {
 			return fmt.Errorf("invalid encrypted password: %w", err)
 		}
 	}
+	if c.SudoPassword != "" {
+		if err := credentials.Validate(c.SudoPassword); err != nil {
+			return fmt.Errorf("invalid encrypted sudo password: %w", err)
+		}
+	}
 	invalidText := func(s string) bool {
 		return strings.ContainsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
 	}
@@ -55,6 +68,31 @@ func (c Connection) Validate() error {
 	}
 	if strings.ContainsFunc(c.IdentityFile, unicode.IsControl) {
 		return errors.New("identity_file must contain no control characters")
+	}
+	if err := validateProxy(c.Proxy); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateProxy accepts an empty proxy or a socks5 URL with an explicit
+// host:port; other schemes are rejected so misconfiguration fails loudly.
+func validateProxy(proxy string) error {
+	if proxy == "" {
+		return nil
+	}
+	if strings.ContainsFunc(proxy, unicode.IsControl) {
+		return errors.New("proxy must contain no control characters")
+	}
+	u, err := url.Parse(proxy)
+	if err != nil {
+		return fmt.Errorf("invalid proxy URL: %w", err)
+	}
+	if u.Scheme != "socks5" && u.Scheme != "socks5h" {
+		return fmt.Errorf("proxy scheme %q not supported (use socks5://host:port)", u.Scheme)
+	}
+	if u.Hostname() == "" || u.Port() == "" {
+		return errors.New("proxy must include host and port, e.g. socks5://127.0.0.1:1080")
 	}
 	return nil
 }

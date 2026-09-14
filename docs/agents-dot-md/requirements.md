@@ -28,7 +28,7 @@
 
 ## 配置
 
-默认使用 `os.UserConfigDir()` 下的 `ah/connections.toml`，允许 `--config <path>` 覆盖。连接以唯一别名索引，字段至少含 host、port、user，可指定 identity_file；端口默认 22。`new/edit --password` 隐藏输入并加密保存，`edit --clear-password` 删除密码。TOML 不接受明文密码。`--key-file` 指定主密钥，默认同用户配置目录下的 ah/master.key，0600；缺失或损坏时解密报错。保存的密码可用于 connect/c/cp 与非交互补全。
+默认使用 `os.UserConfigDir()` 下的 `ah/connections.toml`，允许 `--config <path>` 覆盖。连接以唯一别名索引，字段至少含 host、port、user，可指定 identity_file；端口默认 22。`new/edit --password` 隐藏输入并加密保存，`edit --clear-password` 删除密码。TOML 不接受明文密码。`--key-file` 指定主密钥，默认同用户配置目录下的 ah/master.key，0600；缺失或损坏时解密报错。保存的密码可用于 connect/c/cp 与非交互补全。可选 `sudo`（布尔）与 `sudo_password`（加密）控制自动提权，详见 sudo 提权契约。可选 `proxy` 字段让该连接经 SOCKS5 代理拨号，由 `new/edit --proxy`、`edit --clear-proxy` 管理；host 存目标真实地址，代理仅改变到达方式，主机校验仍按目标主机名记录。取值须为 `socks5://host:port`（可带 `user:pass@`），其它 scheme 或缺端口时校验报错。代理对 connect/c、cp 两端与远程补全一致生效；ah 仍不支持 ProxyCommand 或多级跳板。
 
 示意结构（虚构地址）：
 
@@ -68,3 +68,7 @@ user = "bob"
 ## 远程命令契约
 
 连接名后的参数按 SSH 方式用空格连接，交给远程 shell 解析；ah 自身选项必须位于连接名前，之后的选项属于远程命令。命令模式不申请 PTY、不将本地终端改为 raw，转发 stdin/stdout/stderr，保留远程退出码；完成或取消时停止输入转发并关闭连接，保留调用方 stdin。无命令时维持既有交互终端行为。
+
+## sudo 提权契约
+
+连接可保存 `sudo`（布尔）与可选 `sudo_password`（加密），由 `new/edit --sudo/--no-sudo/--sudo-password/--clear-sudo-password` 管理。启用后 connect/c 自动提权到 root：带命令时包成 `sudo -S -p '' -- /bin/sh -c '<原命令>'`，把 sudo 密码作为远端 stdin 首行注入，随后转发调用方 stdin，因此管道与 `&&` 等 shell 语义保持不变；无命令的交互登录改用 `sudo -p '' -i`（不加 `-S`，依赖终端关闭回显读取密码）。sudo 密码取 `sudo_password`，否则回退 SSH `password`；两者皆空时退化为 `sudo -n`，依赖服务端 NOPASSWD。密码仅经加密存取与远端 stdin 传递，不进入命令行、输出或历史；解密失败按连接名报错。

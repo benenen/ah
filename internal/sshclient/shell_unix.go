@@ -17,16 +17,29 @@ import (
 // Shell runs a remote shell, requesting a PTY only when stdin is a terminal.
 // It consumes the connection and closes its transport when the shell ends.
 func (c *Client) Shell(stdin *os.File, stdout, stderr io.Writer) error {
-	return c.runSession("", true, stdin, stdout, stderr)
+	return c.runSession("", true, nil, stdin, stdout, stderr)
+}
+
+// ShellCommand runs command under a PTY (like an interactive login) instead of
+// the default login shell, injecting stdinPrefix ahead of the caller's input.
+// It is used to launch sudo for an escalated interactive session.
+func (c *Client) ShellCommand(command string, stdinPrefix []byte, stdin *os.File, stdout, stderr io.Writer) error {
+	return c.runSession(command, true, stdinPrefix, stdin, stdout, stderr)
 }
 
 // Exec sends a command to the remote shell without requesting a PTY.
 // Like Shell, it consumes and closes the connection and stops pending input reads.
 func (c *Client) Exec(command string, stdin *os.File, stdout, stderr io.Writer) error {
-	return c.runSession(command, false, stdin, stdout, stderr)
+	return c.runSession(command, false, nil, stdin, stdout, stderr)
 }
 
-func (c *Client) runSession(command string, interactive bool, stdin *os.File, stdout, stderr io.Writer) (result error) {
+// ExecPrefixed behaves like Exec but writes stdinPrefix to the remote stdin
+// before forwarding the caller's input, feeding a sudo -S password line.
+func (c *Client) ExecPrefixed(command string, stdinPrefix []byte, stdin *os.File, stdout, stderr io.Writer) error {
+	return c.runSession(command, false, stdinPrefix, stdin, stdout, stderr)
+}
+
+func (c *Client) runSession(command string, interactive bool, stdinPrefix []byte, stdin *os.File, stdout, stderr io.Writer) (result error) {
 	session, err := c.client.NewSession()
 	if err != nil {
 		return err
@@ -42,6 +55,14 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 		defer func() { close(stopInput); _ = c.Close(); <-inputDone }()
 		go func() {
 			defer close(inputDone)
+			// Feed sudo -S its password line before forwarding the caller's stdin,
+			// so the escalated command inherits the remaining input unchanged.
+			if len(stdinPrefix) > 0 {
+				if _, err := pipe.Write(stdinPrefix); err != nil {
+					_ = pipe.Close()
+					return
+				}
+			}
 			_, _ = io.Copy(pipe, &shellInput{file: stdin, stop: stopInput})
 			_ = pipe.Close()
 		}()
@@ -86,7 +107,7 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 			}
 		}()
 	}
-	if interactive {
+	if command == "" {
 		err = session.Shell()
 	} else {
 		err = session.Start(command)
