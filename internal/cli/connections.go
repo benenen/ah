@@ -28,11 +28,13 @@ func (a *app) listCommand() *cobra.Command {
 	}}
 }
 func connectionFlags(cmd *cobra.Command, c *config.Connection) {
+	cmd.Flags().BoolVar(&c.Sudo, "sudo", false, "run SSH commands and remote file operations as root")
+	cmd.Flags().StringVar(&c.SFTPServer, "sftp-server", "", "absolute remote SFTP server path for sudo (empty to detect common paths)")
+	cmd.Flags().StringArrayVar(&c.Proxies, "proxy", nil, "SOCKS5 HOST:PORT or socks5://HOST:PORT; repeat in hop order")
 	cmd.Flags().StringVar(&c.Host, "host", "", "hostname or IP address")
 	cmd.Flags().IntVarP(&c.Port, "port", "p", 22, "SSH port")
 	cmd.Flags().StringVarP(&c.User, "user", "u", "", "SSH username")
 	cmd.Flags().StringVarP(&c.IdentityFile, "identity-file", "i", "", "private key path (empty to use agent/default keys)")
-	cmd.Flags().StringVar(&c.Proxy, "proxy", "", "SOCKS5 proxy URL, e.g. socks5://127.0.0.1:1080")
 }
 func (a *app) newCommand() *cobra.Command {
 	var c config.Connection
@@ -62,7 +64,7 @@ func (a *app) newCommand() *cobra.Command {
 			}
 		}
 		if sudoPassword {
-			c.SudoPassword, err = a.promptSecret(cmd, args[0], "sudo password: ")
+			c.SudoPassword, err = a.promptStoredPassword(cmd, args[0]+"/sudo", "sudo password: ")
 			if err != nil {
 				return err
 			}
@@ -81,13 +83,12 @@ func (a *app) newCommand() *cobra.Command {
 	}}
 	connectionFlags(cmd, &c)
 	cmd.Flags().BoolVar(&password, "password", false, "prompt for a password and save it encrypted in TOML")
-	cmd.Flags().BoolVar(&c.Sudo, "sudo", false, "escalate remote commands and shells to root via sudo")
-	cmd.Flags().BoolVar(&sudoPassword, "sudo-password", false, "prompt for a separate sudo password (defaults to the SSH password)")
+	cmd.Flags().BoolVar(&sudoPassword, "sudo-password", false, "prompt for a sudo password and save it encrypted")
 	return cmd
 }
 func (a *app) editCommand() *cobra.Command {
 	var changes config.Connection
-	var password, clearPassword, sudo, noSudo, sudoPassword, clearSudoPassword, clearProxy bool
+	var password, clearPassword, clearProxy, sudoPassword, clearSudoPassword, noSudo bool
 	cmd := &cobra.Command{Use: "edit NAME [flags]", Short: "Update only the supplied connection fields", Args: cobra.ExactArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := a.store()
 		if err != nil {
@@ -109,7 +110,7 @@ func (a *app) editCommand() *cobra.Command {
 		}
 		encryptedSudo := ""
 		if sudoPassword {
-			encryptedSudo, err = a.promptSecret(cmd, args[0], "sudo password: ")
+			encryptedSudo, err = a.promptStoredPassword(cmd, args[0]+"/sudo", "sudo password: ")
 			if err != nil {
 				return err
 			}
@@ -118,6 +119,29 @@ func (a *app) editCommand() *cobra.Command {
 			c, ok := m[args[0]]
 			if !ok {
 				return fmt.Errorf("connection %q does not exist", args[0])
+			}
+			if cmd.Flags().Changed("sudo") {
+				c.Sudo = changes.Sudo
+			}
+			if noSudo {
+				c.Sudo = false
+			}
+			if cmd.Flags().Changed("sftp-server") {
+				c.SFTPServer = changes.SFTPServer
+			}
+			if sudoPassword {
+				c.SudoPassword = encryptedSudo
+			}
+			if clearSudoPassword {
+				c.SudoPassword = ""
+			}
+			if cmd.Flags().Changed("proxy") {
+				c.Proxies = changes.Proxies
+				c.Proxy = ""
+			}
+			if clearProxy {
+				c.Proxies = nil
+				c.Proxy = ""
 			}
 			if cmd.Flags().Changed("host") {
 				c.Host = changes.Host
@@ -131,29 +155,11 @@ func (a *app) editCommand() *cobra.Command {
 			if cmd.Flags().Changed("identity-file") {
 				c.IdentityFile = changes.IdentityFile
 			}
-			if cmd.Flags().Changed("proxy") {
-				c.Proxy = changes.Proxy
-			}
-			if clearProxy {
-				c.Proxy = ""
-			}
 			if password {
 				c.Password = encrypted
 			}
 			if clearPassword {
 				c.Password = ""
-			}
-			if sudo {
-				c.Sudo = true
-			}
-			if noSudo {
-				c.Sudo = false
-			}
-			if sudoPassword {
-				c.SudoPassword = encryptedSudo
-			}
-			if clearSudoPassword {
-				c.SudoPassword = ""
 			}
 			if err := c.Validate(); err != nil {
 				return err
@@ -169,15 +175,14 @@ func (a *app) editCommand() *cobra.Command {
 	connectionFlags(cmd, &changes)
 	cmd.Flags().BoolVar(&password, "password", false, "prompt for a replacement password and save it encrypted")
 	cmd.Flags().BoolVar(&clearPassword, "clear-password", false, "remove the saved encrypted password")
-	cmd.Flags().BoolVar(&sudo, "sudo", false, "escalate remote commands and shells to root via sudo")
-	cmd.Flags().BoolVar(&noSudo, "no-sudo", false, "disable sudo escalation for this connection")
-	cmd.Flags().BoolVar(&sudoPassword, "sudo-password", false, "prompt for a separate sudo password and save it encrypted")
-	cmd.Flags().BoolVar(&clearSudoPassword, "clear-sudo-password", false, "remove the saved sudo password (fall back to the SSH password)")
-	cmd.Flags().BoolVar(&clearProxy, "clear-proxy", false, "remove the saved SOCKS5 proxy")
-	cmd.MarkFlagsMutuallyExclusive("password", "clear-password")
+	cmd.Flags().BoolVar(&noSudo, "no-sudo", false, "disable default sudo escalation")
 	cmd.MarkFlagsMutuallyExclusive("sudo", "no-sudo")
-	cmd.MarkFlagsMutuallyExclusive("sudo-password", "clear-sudo-password")
+	cmd.MarkFlagsMutuallyExclusive("password", "clear-password")
+	cmd.Flags().BoolVar(&clearProxy, "clear-proxy", false, "remove the saved proxy chain and connect directly")
 	cmd.MarkFlagsMutuallyExclusive("proxy", "clear-proxy")
+	cmd.Flags().BoolVar(&sudoPassword, "sudo-password", false, "prompt for a sudo password and save it encrypted")
+	cmd.Flags().BoolVar(&clearSudoPassword, "clear-sudo-password", false, "remove the saved sudo password")
+	cmd.MarkFlagsMutuallyExclusive("sudo-password", "clear-sudo-password")
 	return cmd
 }
 func (a *app) removeCommand() *cobra.Command {

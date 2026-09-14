@@ -108,7 +108,7 @@ func TestDialTCPThroughSOCKS5(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	conn, err := dialTCP(ctx, target.Addr().String(), Options{Proxy: "socks5://" + socksAddr, Timeout: 2 * time.Second})
+	conn, err := dialTransport(ctx, target.Addr().String(), []string{"socks5://" + socksAddr})
 	if err != nil {
 		t.Fatalf("dial through proxy: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestDialTCPDirectNoProxy(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	conn, err := dialTCP(ctx, ln.Addr().String(), Options{Timeout: time.Second})
+	conn, err := dialTransport(ctx, ln.Addr().String(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestDialTCPDirectNoProxy(t *testing.T) {
 
 func TestDialTCPInvalidProxy(t *testing.T) {
 	ctx := context.Background()
-	if _, err := dialTCP(ctx, "127.0.0.1:22", Options{Proxy: "://bad", Timeout: time.Second}); err == nil {
+	if _, err := dialTransport(ctx, "127.0.0.1:22", []string{"://bad"}); err == nil {
 		t.Fatal("expected error for malformed proxy URL")
 	}
 }
@@ -167,7 +167,7 @@ func TestDialTCPProxyUnreachable(t *testing.T) {
 	ln.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if _, err := dialTCP(ctx, "10.0.0.1:22", Options{Proxy: "socks5://" + addr, Timeout: time.Second}); err == nil {
+	if _, err := dialTransport(ctx, "10.0.0.1:22", []string{"socks5://" + addr}); err == nil {
 		t.Fatal("expected error when proxy is unreachable")
 	} else if errors.Is(err, context.DeadlineExceeded) {
 		t.Skip("environment delayed the refused connect past the deadline")

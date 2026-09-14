@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,15 +84,13 @@ func canonicalPasswordPath(path string) (string, error) {
 }
 
 func (a *app) promptPassword(cmd *cobra.Command, name string) (string, error) {
-	return a.promptSecret(cmd, name, "SSH password: ")
+	return a.promptStoredPassword(cmd, name, "SSH password: ")
 }
 
-// promptSecret reads a secret from the terminal and returns it encrypted under
-// the connection name, sharing the interactive-only guard across password kinds.
-func (a *app) promptSecret(cmd *cobra.Command, name, prompt string) (string, error) {
+func (a *app) promptStoredPassword(cmd *cobra.Command, name, prompt string) (string, error) {
 	input, ok := cmd.InOrStdin().(*os.File)
 	if !ok || !term.IsTerminal(int(input.Fd())) {
-		return "", fmt.Errorf("saving a password requires an interactive terminal")
+		return "", fmt.Errorf("password entry requires an interactive terminal")
 	}
 	store, err := a.passwordStore()
 	if err != nil {
@@ -113,7 +112,6 @@ func (a *app) connectionSSHOptions(cmd *cobra.Command, name string, c config.Con
 	if interactive {
 		opts = a.sshOptions(cmd)
 	}
-	opts.Proxy = c.Proxy
 	if c.Password != "" {
 		opts.PasswordOnly = true
 		opts.Passphrase = nil
@@ -130,6 +128,28 @@ func (a *app) connectionSSHOptions(cmd *cobra.Command, name string, c config.Con
 			}
 			defer clear(secret)
 			return string(secret), nil
+		}
+	}
+
+	if c.Sudo {
+		opts.SudoPassword = func(ctx context.Context) ([]byte, error) {
+			if c.SudoPassword != "" {
+				store, err := a.passwordStore()
+				if err != nil {
+					return nil, err
+				}
+				secret, err := store.Decrypt(name+"/sudo", c.SudoPassword)
+				if err != nil {
+					// Earlier releases bound both password types to the alias.
+					return store.Decrypt(name, c.SudoPassword)
+				}
+				return secret, nil
+			}
+			input, ok := cmd.InOrStdin().(*os.File)
+			if !interactive || !ok || !term.IsTerminal(int(input.Fd())) {
+				return nil, fmt.Errorf("sudo needs a password: save one with edit %s --sudo-password or use an interactive terminal", name)
+			}
+			return readSecret(ctx, input, cmd.ErrOrStderr(), "sudo password: ")
 		}
 	}
 	return opts

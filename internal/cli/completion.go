@@ -91,7 +91,10 @@ func (a *app) completeRemote(cmd *cobra.Command, args []string, partial string) 
 	return paths, directive
 }
 func completionCommand() *cobra.Command {
-	return &cobra.Command{Use: "completion [bash|zsh]", Short: "Print a shell completion script", Args: cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs), ValidArgs: []string{"bash", "zsh"}, RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: "completion [bash|zsh|fish]", Short: "Print a shell completion script", Args: cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs), ValidArgs: []string{"bash", "zsh", "fish"}, RunE: func(cmd *cobra.Command, args []string) error {
+		if args[0] == "fish" {
+			return cmd.Root().GenFishCompletion(cmd.OutOrStdout(), true)
+		}
 		if args[0] == "bash" {
 			if err := cmd.Root().GenBashCompletionV2(cmd.OutOrStdout(), true); err != nil {
 				return err

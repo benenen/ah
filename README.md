@@ -1,6 +1,8 @@
 # ah
 
-Go 编写的 SSH 连接管理 CLI。使用 TOML 保存命名连接，支持本地与远端文件互传、Bash/Zsh 路径 Tab 补全，并使用 SQLite 保存可查询、可重跑的复制历史。
+Go 编写的 SSH 连接管理 CLI。使用 TOML 保存命名连接，支持本地与远端文件互传、Bash/Zsh/Fish 路径 Tab 补全，并使用 SQLite 保存可查询、可重跑的复制历史。
+
+完整参数与配置见 [CLI 文档](docs/cli.md)；agent 操作与安装见 [ah-cli skill](skills/ah-cli/SKILL.md) 和 [安装说明](docs/cli.md#agent-使用)。
 
 ## 安装
 
@@ -29,10 +31,10 @@ ah new P --host 10.0.0.9 --user dave --password --proxy socks5://127.0.0.1:1080
 # 经 SOCKS5 代理连接（含 connect/c、cp 与远程补全）；host 存目标真实地址。
 ah edit P --clear-proxy       # 取消代理，恢复直连
 ah new C --host c.example.com --user carol --password --sudo
-# 连接后自动 sudo 到 root；sudo 密码默认复用 SSH 密码。
-ah edit C --sudo-password     # 单独设置 sudo 密码（与 SSH 密码不同时）
+# 连接后自动 sudo 到 root；sudo 需要密码时使用独立保存的密码或交互输入。
+ah edit C --sudo-password     # 单独设置并加密保存 sudo 密码
 ah edit C --no-sudo           # 关闭自动 sudo
-ah edit C --clear-sudo-password   # 删除单独的 sudo 密码，回退到 SSH 密码
+ah edit C --clear-sudo-password   # 删除保存的 sudo 密码，需要时交互输入
 ah rm B
 ah c A                  # 打开交互 SSH 命令行
 ah connect A                 # 等价命令
@@ -51,7 +53,7 @@ ah --timeout 15s c nas uname -a
 
 远程命令模式不申请 PTY，支持标准输入管道，分别转发 stdout/stderr，并保留远端非零退出码。连接名 Tab 补全和原有认证选项继续可用。
 
-启用 `--sudo` 的连接会自动提权到 root：带命令时把命令包成 `sudo -S -p '' -- /bin/sh -c '<原命令>'`，先向远端 stdin 写入 sudo 密码行，因此管道数据仍完整交给命令、`&&`/管道等 shell 语义不变；不带命令的交互登录改用 `sudo -p '' -i`（不加 `-S`，让终端以关闭回显的方式读取密码，避免在屏幕上泄露）。sudo 密码优先取单独保存的 `sudo_password`，否则复用 SSH `password`；两者都没有时退化为 `sudo -n`，依赖服务端 NOPASSWD 配置。密码只经加密存取与远端 stdin 传递，不写入命令行或日志。
+启用 `--sudo` 后，`connect/c`、`cp` 的远端操作和远程补全均以 root 执行。sudo 请求密码时解密独立保存的 sudo 密码；未保存则在交互终端隐藏输入，免密 sudo 不要求密码。SSH 登录密码不自动用于 sudo。补全不弹提示，需要保存的 sudo 密码或免密 sudo。sudo 复制需要远端独立 `sftp-server`，可用 `edit NAME --sftp-server /usr/lib/openssh/sftp-server` 指定路径。旧版加密 sudo 密码和 `--no-sudo` 用法仍兼容。
 
 连接别名只允许字母、数字、下划线和连字符，首字符必须为字母或数字。`new` 要求 host 和 user；`edit` 只修改明确传入的字段。`rm` 仅删除连接配置。
 
@@ -87,6 +89,16 @@ ah --known-hosts ./test-known-hosts --timeout 15s connect A
 ```
 
 `--timeout` 默认 10 秒，约束认证、连接与握手阶段；不会给整次文件传输设置总时长上限。Ctrl-C 可取消复制或密码输入；交互 SSH 中 Ctrl-C 发送给远端终端。
+
+## SOCKS5 多跳
+
+```sh
+# 本机 → 第一跳 → 第二跳 → nas
+ah edit nas --proxy socks5://127.0.0.1:1080 --proxy socks5://proxy2.internal:1080
+ah edit nas --clear-proxy
+```
+
+`new/edit` 支持重复 `--proxy`，按顺序保存到 TOML 的 `proxies` 数组。edit 替换整条链，未指定则保留。旧 `proxy` 字符串仍兼容，但不能与数组同时配置。登录、复制、历史重跑与远程补全共用代理链；后续域名由上一跳解析，失败不回退直连。代理 URL 认证信息仍以原文保存，不受 SSH/sudo 密码加密保护。
 
 ## 文件复制
 
@@ -136,6 +148,8 @@ source <(ah completion bash)
 # Zsh
 autoload -Uz compinit && compinit
 source <(ah completion zsh)
+# Fish
+ah completion fish | source
 ```
 
 永久启用（每次开终端自动加载），把对应片段写入 `~/.bashrc` 或 `~/.zshrc`：
@@ -180,6 +194,23 @@ make clean                 # 清理构建产物
 
 也可以直接使用 `go build -o bin/ah ./cmd/ah`、`go install ./cmd/ah`、`go test ./...` 等 Go 命令。
 
-测试启动本地 SSH/SFTP 服务，使用临时密钥和配置；Bash/Zsh 测试在隔离的伪终端中实际按 Tab 并复制含特殊字符的文件。缺少对应 shell 时跳过该 shell 测试。
+测试启动本地 SSH/SFTP 服务，使用临时密钥和配置；Bash/Zsh/Fish 测试在隔离的伪终端中实际按 Tab 并复制含特殊字符的文件。缺少对应 shell 时跳过该 shell 测试。
 
 设计和开发约定见 [AGENTS.md](AGENTS.md)。依赖接口参考 [Cobra 补全文档](https://cobra.dev/docs/how-to-guides/shell-completion/)、[SFTP API](https://pkg.go.dev/github.com/pkg/sftp)、[SSH API](https://pkg.go.dev/golang.org/x/crypto/ssh) 和 [TOML API](https://pkg.go.dev/github.com/pelletier/go-toml/v2)。
+
+### Fish 持久加载与目录选择
+
+在仓库中临时启用：
+
+```fish
+./bin/ah completion fish | source
+```
+
+永久启用（已通过 make install 安装 ah 并加入 PATH）：
+
+```fish
+mkdir -p ~/.config/fish/completions
+ah completion fish > ~/.config/fish/completions/ah.fish
+```
+
+`/home` 与登录目录 `~` 不等价。先用 `ah c NAME pwd` 确认登录目录；例如 root 通常登录到 `/root`，应补全 `NAME:/root/` 或 `NAME:~/`。空目录没有候选。可以用 `ah __complete cp ./README.md NAME:/root/` 单独检查候选；末尾 `:数字` 是 shell 补全协议，不是文件名。

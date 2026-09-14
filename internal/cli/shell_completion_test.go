@@ -31,7 +31,7 @@ func TestShellTabCompletion(t *testing.T) {
 		t.Fatalf("build CLI: %v\n%s", err, out)
 	}
 	for _, shell := range []string{"bash", "zsh"} {
-		for _, mode := range []string{"remote-remote", "local-local"} {
+		for _, mode := range []string{"remote-remote", "local-local", "local-remote"} {
 			for _, quoting := range []struct{ name, mark string }{{"unquoted", ""}, {"single", "'"}, {"double", "\""}} {
 				t.Run(shell+"/"+mode+"/"+quoting.name, func(t *testing.T) {
 					shellPath, err := exec.LookPath(shell)
@@ -40,6 +40,9 @@ func TestShellTabCompletion(t *testing.T) {
 					}
 					a, b := testutil.StartSSH(t), testutil.StartSSH(t)
 					home := t.TempDir()
+					if err := os.Symlink(binDir, filepath.Join(home, "bin")); err != nil {
+						t.Fatal(err)
+					}
 					configPath := filepath.Join(home, "connections.toml")
 					if err := (config.Store{Path: configPath}).Update(context.Background(), func(m map[string]config.Connection) error { m["A"] = a.Connection; m["B"] = b.Connection; return nil }); err != nil {
 						t.Fatal(err)
@@ -61,6 +64,8 @@ func TestShellTabCompletion(t *testing.T) {
 					sourceRoot, targetRoot := a.Root, b.Root
 					if mode == "local-local" {
 						sourceRoot, targetRoot = home, home
+					} else if mode == "local-remote" {
+						sourceRoot = home
 					}
 					payload := []byte("Tab completed both independent paths\n")
 					if err := os.WriteFile(filepath.Join(sourceRoot, sourceName), payload, 0600); err != nil {
@@ -167,7 +172,10 @@ func TestShellTabCompletion(t *testing.T) {
 							targetInput += quoting.mark
 						}
 					}
-					write(fmt.Sprintf("ah --config %s --known-hosts %s cp %s %s\n", quote(configPath), quote(known), sourceInput, targetInput))
+					if mode == "local-remote" {
+						sourceInput = quoting.mark + "./sou\t"
+					}
+					write(fmt.Sprintf("./bin/ah --config %s --known-hosts %s cp %s %s\n", quote(configPath), quote(known), sourceInput, targetInput))
 					write("printf '\\nAH_RESULT:%s\\n' \"$?\"\n")
 					await("\r\nAH_RESULT:")
 					// Wait through the status line instead of mistaking an echoed command for output.

@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,18 +19,28 @@ import (
 )
 
 type Connection struct {
-	Host         string `toml:"host"`
-	Port         int    `toml:"port"`
-	User         string `toml:"user"`
-	IdentityFile string `toml:"identity_file,omitempty"`
-	Password     string `toml:"password,omitempty"`
-	// Sudo escalates remote commands and interactive shells to root via sudo.
-	Sudo bool `toml:"sudo,omitempty"`
-	// SudoPassword is an encrypted sudo password; when empty, Sudo reuses Password.
-	SudoPassword string `toml:"sudo_password,omitempty"`
-	// Proxy tunnels the SSH connection through a SOCKS5 proxy, e.g.
-	// "socks5://127.0.0.1:1080" or "socks5://user:pass@host:1080".
-	Proxy string `toml:"proxy,omitempty"`
+	// Proxy retains compatibility with existing single-proxy configurations.
+	Proxy        string   `toml:"proxy,omitempty"`
+	Sudo         bool     `toml:"sudo,omitempty"`
+	SudoPassword string   `toml:"sudo_password,omitempty"`
+	SFTPServer   string   `toml:"sftp_server,omitempty"`
+	Host         string   `toml:"host"`
+	Port         int      `toml:"port"`
+	User         string   `toml:"user"`
+	IdentityFile string   `toml:"identity_file,omitempty"`
+	Password     string   `toml:"password,omitempty"`
+	Proxies      []string `toml:"proxies,omitempty"`
+}
+
+// ProxyChain returns the configured hops in traversal order.
+func (c Connection) ProxyChain() []string {
+	if len(c.Proxies) > 0 {
+		return c.Proxies
+	}
+	if c.Proxy != "" {
+		return []string{c.Proxy}
+	}
+	return nil
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
@@ -44,14 +53,29 @@ func ValidateName(name string) error {
 }
 
 func (c Connection) Validate() error {
-	if c.Password != "" {
-		if err := credentials.Validate(c.Password); err != nil {
-			return fmt.Errorf("invalid encrypted password: %w", err)
-		}
-	}
 	if c.SudoPassword != "" {
 		if err := credentials.Validate(c.SudoPassword); err != nil {
 			return fmt.Errorf("invalid encrypted sudo password: %w", err)
+		}
+	}
+	if c.SFTPServer != "" && (!strings.HasPrefix(c.SFTPServer, "/") || strings.ContainsFunc(c.SFTPServer, unicode.IsControl)) {
+		return fmt.Errorf("sftp_server must be an absolute remote path without control characters")
+	}
+
+	if c.Proxy != "" && !strings.Contains(c.Proxy, "://") {
+		return fmt.Errorf("legacy proxy must be a SOCKS5 URL")
+	}
+	if c.Proxy != "" && len(c.Proxies) > 0 {
+		return fmt.Errorf("use either proxy or proxies, not both")
+	}
+	for i, value := range c.ProxyChain() {
+		if _, err := ProxyAddress(value); err != nil {
+			return fmt.Errorf("proxy hop %d: %w", i+1, err)
+		}
+	}
+	if c.Password != "" {
+		if err := credentials.Validate(c.Password); err != nil {
+			return fmt.Errorf("invalid encrypted password: %w", err)
 		}
 	}
 	invalidText := func(s string) bool {
@@ -68,31 +92,6 @@ func (c Connection) Validate() error {
 	}
 	if strings.ContainsFunc(c.IdentityFile, unicode.IsControl) {
 		return errors.New("identity_file must contain no control characters")
-	}
-	if err := validateProxy(c.Proxy); err != nil {
-		return err
-	}
-	return nil
-}
-
-// validateProxy accepts an empty proxy or a socks5 URL with an explicit
-// host:port; other schemes are rejected so misconfiguration fails loudly.
-func validateProxy(proxy string) error {
-	if proxy == "" {
-		return nil
-	}
-	if strings.ContainsFunc(proxy, unicode.IsControl) {
-		return errors.New("proxy must contain no control characters")
-	}
-	u, err := url.Parse(proxy)
-	if err != nil {
-		return fmt.Errorf("invalid proxy URL: %w", err)
-	}
-	if u.Scheme != "socks5" && u.Scheme != "socks5h" {
-		return fmt.Errorf("proxy scheme %q not supported (use socks5://host:port)", u.Scheme)
-	}
-	if u.Hostname() == "" || u.Port() == "" {
-		return errors.New("proxy must include host and port, e.g. socks5://127.0.0.1:1080")
 	}
 	return nil
 }

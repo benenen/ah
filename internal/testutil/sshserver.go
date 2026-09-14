@@ -33,22 +33,28 @@ type SSHServer struct {
 
 func StartSSH(t *testing.T) *SSHServer {
 	t.Helper()
-	return startSSH(t, nil, nil)
+	return startSSH(t, nil, nil, false)
 }
 
 // StartPasswordSSH starts a server that accepts only the supplied password.
 func StartPasswordSSH(t *testing.T, password string) *SSHServer {
 	t.Helper()
-	return startSSH(t, &password, nil)
+	return startSSH(t, &password, nil, false)
 }
 
 // StartCommandSSH accepts exec requests but refuses PTY requests.
 func StartCommandSSH(t *testing.T, handler func(string, ssh.Channel) uint32) *SSHServer {
 	t.Helper()
-	return startSSH(t, nil, handler)
+	return startSSH(t, nil, handler, false)
 }
 
-func startSSH(t *testing.T, password *string, handler func(string, ssh.Channel) uint32) *SSHServer {
+// StartPTYCommandSSH also accepts PTY requests; handlers emulate the merged stream.
+func StartPTYCommandSSH(t *testing.T, handler func(string, ssh.Channel) uint32) *SSHServer {
+	t.Helper()
+	return startSSH(t, nil, handler, true)
+}
+
+func startSSH(t *testing.T, password *string, handler func(string, ssh.Channel) uint32, allowPTY bool) *SSHServer {
 	t.Helper()
 	root := t.TempDir()
 	_, hostKey, err := ed25519.GenerateKey(rand.Reader)
@@ -119,14 +125,14 @@ func startSSH(t *testing.T, password *string, handler func(string, ssh.Channel) 
 			f.conns[conn] = true
 			f.wg.Add(1)
 			f.mu.Unlock()
-			go f.serve(conn, cfg, handler)
+			go f.serve(conn, cfg, handler, allowPTY)
 		}
 	}()
 	t.Cleanup(f.Close)
 	return f
 }
 
-func (f *SSHServer) serve(conn net.Conn, cfg *ssh.ServerConfig, handler func(string, ssh.Channel) uint32) {
+func (f *SSHServer) serve(conn net.Conn, cfg *ssh.ServerConfig, handler func(string, ssh.Channel) uint32, allowPTY bool) {
 	defer f.wg.Done()
 	defer conn.Close()
 	defer func() { f.mu.Lock(); delete(f.conns, conn); f.mu.Unlock() }()
@@ -152,6 +158,10 @@ func (f *SSHServer) serve(conn net.Conn, cfg *ssh.ServerConfig, handler func(str
 			defer sessions.Done()
 			defer channel.Close()
 			for req := range requests {
+				if req.Type == "pty-req" && allowPTY {
+					req.Reply(true, nil)
+					continue
+				}
 				var command struct{ Command string }
 				if req.Type == "exec" && handler != nil && ssh.Unmarshal(req.Payload, &command) == nil {
 					req.Reply(true, nil)

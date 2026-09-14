@@ -48,24 +48,7 @@ func (a *app) connectCommand() *cobra.Command {
 		defer func() { err = errors.Join(err, client.Close()) }()
 		if len(args) > 1 {
 			// OpenSSH sends a space-joined command for the remote shell to parse.
-			command := strings.Join(args[1:], " ")
-			if c.Sudo {
-				sudoCmd, prefix, err := a.sudoExecCommand(args[0], c, command)
-				if err != nil {
-					return err
-				}
-				defer clear(prefix)
-				return client.ExecPrefixed(sudoCmd, prefix, input, cmd.OutOrStdout(), cmd.ErrOrStderr())
-			}
-			return client.Exec(command, input, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		}
-		if c.Sudo {
-			sudoCmd, prefix, err := a.sudoShellCommand(args[0], c)
-			if err != nil {
-				return err
-			}
-			defer clear(prefix)
-			return client.ShellCommand(sudoCmd, prefix, input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return client.Exec(strings.Join(args[1:], " "), input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		}
 		return client.Shell(input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	}}
