@@ -44,6 +44,20 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | `ah history run ID` | 重跑该次复制，追加新记录 |
 | `ah completion bash` / `zsh` / `fish` | 输出对应 shell 的补全脚本 |
 
+## 命令简写
+
+| 完整命令 | 简写 |
+| --- | --- |
+| `connect` | `c` |
+| `copy` | `cp` |
+| `edit` | `e` |
+| `history` | `h` |
+| `list` | `ls` |
+| `new` | `n` |
+| `remove` | `rm` |
+
+完整命令与简写使用相同参数，均在 `ah --help` 中标注。`ah h` 查询历史，`ah -h` 显示帮助。
+
 ## 全局选项
 
 | 选项 | 默认值/行为 |

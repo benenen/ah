@@ -81,3 +81,5 @@ SSH 统一拨号路径用于 connect/c/cp/远程补全；第一跳本机解析�
 管理员 shell 使用 root 的 /bin/sh -l；复制启动root独立sftp-server（常见路径探测，可覆盖），不改变本地文件操作身份。要求服务器账户有相应sudo权限，不改sudoers；仅internal-sftp不足以完成此模式。sudo认证/初始化需限时、支持取消，失败不回退普通用户。
 
 兼容旧 proxy 字符串（与 proxies 互斥）、socks5h URL、代理 URL 认证和 --no-sudo。代理 URL 认证信息原样存储，不属于加密密码。旧 sudo 密文按旧连接名绑定解密，新密码使用独立 sudo 绑定；不再隐式复用 SSH 密码。
+
+命令统一支持 connect/c、copy/cp、edit/e、history/h、list/ls、new/n、remove/rm；顶层 help 显示简写，子命令帮助显示别名。-h 仍为帮助标志。

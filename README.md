@@ -4,6 +4,20 @@ Go 编写的 SSH 连接管理 CLI。使用 TOML 保存命名连接，支持本�
 
 完整参数与配置见 [CLI 文档](docs/cli.md)；agent 操作与安装见 [ah-cli skill](skills/ah-cli/SKILL.md) 和 [安装说明](docs/cli.md#agent-使用)。
 
+## 命令简写
+
+| 完整命令 | 简写 |
+| --- | --- |
+| `connect` | `c` |
+| `copy` | `cp` |
+| `edit` | `e` |
+| `history` | `h` |
+| `list` | `ls` |
+| `new` | `n` |
+| `remove` | `rm` |
+
+完整命令与简写使用相同参数，均在 `ah --help` 中标注。`ah h` 查询历史，`ah -h` 显示帮助。
+
 ## 安装
 
 需要 Go 1.26 或更新版本。交互终端支持 macOS、Linux。

@@ -4,6 +4,7 @@ package cli
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/benenen/ah/internal/config"
@@ -35,6 +36,11 @@ func New() *cobra.Command {
 		return nil
 	}
 	root.AddCommand(a.listCommand(), a.newCommand(), a.editCommand(), a.removeCommand(), a.connectCommand(), a.copyCommand(), a.historyCommand(), completionCommand())
+	for _, command := range root.Commands() {
+		if len(command.Aliases) > 0 {
+			command.Short += " (alias: " + strings.Join(command.Aliases, ", ") + ")"
+		}
+	}
 	root.CompletionOptions.DisableDefaultCmd = true
 	return root
 }

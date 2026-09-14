@@ -48,7 +48,7 @@ func (a *app) historyCommand() *cobra.Command {
 		}
 		return out.Flush()
 	}
-	cmd := &cobra.Command{Use: "history [QUERY...]", Short: "Search copy history by keywords", RunE: search}
+	cmd := &cobra.Command{Use: "history [QUERY...]", Aliases: []string{"h"}, Short: "Search copy history by keywords", RunE: search}
 	cmd.PersistentFlags().IntVar(&limit, "limit", 20, "maximum history records (1-1000)")
 	cmd.AddCommand(&cobra.Command{Use: "search [QUERY...]", Short: "Search source, destination, status and errors", RunE: search})
 	cmd.AddCommand(&cobra.Command{Use: "show ID", Short: "Print a safely quoted command for a history entry", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {

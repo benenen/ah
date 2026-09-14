@@ -19,7 +19,7 @@ import (
 
 func (a *app) copyCommand() *cobra.Command {
 	var force bool
-	cmd := &cobra.Command{Use: "cp SOURCE DESTINATION", Short: "Copy a local or NAME:PATH remote file and record its history", Args: cobra.ExactArgs(2), ValidArgsFunction: a.completeRemote, RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "copy SOURCE DESTINATION", Aliases: []string{"cp"}, Short: "Copy a local or NAME:PATH remote file and record its history", Args: cobra.ExactArgs(2), ValidArgsFunction: a.completeRemote, RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err

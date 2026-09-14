@@ -5,6 +5,8 @@ description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制
 
 # 使用 ah CLI
 
+命令与简写：`connect/c`、`copy/cp`、`edit/e`、`history/h`、`list/ls`、`new/n`、`remove/rm`。参数完全一致；`h` 是历史命令，`-h` 是帮助选项。
+
 ## 先确定二进制和操作对象
 
 1. 使用用户指定的 ah 路径。在 ah 仓库内优先用 `./bin/ah`；缺少构建产物时运行 `make build`。仓库外用 `command -v ah` 定位已安装程序，不要假设当前目录有 Makefile。
