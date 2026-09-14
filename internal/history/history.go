@@ -192,3 +192,32 @@ func (s *Store) Search(ctx context.Context, query string, limit int) (records []
 	}
 	return records, nil
 }
+
+type CleanOptions struct {
+	FailedOnly bool
+	Before     time.Time
+}
+
+// Clean removes terminal records while preserving in-flight copy bookkeeping.
+// Keep the SQLite sequence so deleted history IDs cannot refer to new copies.
+func (s *Store) Clean(ctx context.Context, opts CleanOptions) (int64, error) {
+	query := `DELETE FROM copy_history WHERE status IN ('success','failed','canceled')`
+	var args []any
+	if opts.FailedOnly {
+		query += " AND status = ?"
+		args = append(args, "failed")
+	}
+	if !opts.Before.IsZero() {
+		query += " AND started_at < ?"
+		args = append(args, opts.Before.UnixNano())
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("clean copy history: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count cleaned history: %w", err)
+	}
+	return count, nil
+}

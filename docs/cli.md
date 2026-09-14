@@ -312,3 +312,17 @@ ah completion fish > ~/.config/fish/completions/ah.fish
 ```
 
 `/home` 与登录目录 `~` 不等价。先用 `ah c NAME pwd` 确认登录目录；例如 root 通常登录到 `/root`，应补全 `NAME:/root/` 或 `NAME:~/`。空目录没有候选。可以用 `ah __complete cp ./README.md NAME:/root/` 单独检查候选；末尾 `:数字` 是 shell 补全协议，不是文件名。
+
+历史重跑默认继承原覆盖设置。目标已存在且确定需要替换时，使用 `ah h run 1 --force`（简写 `-f`）；使用 `--force=false` 可显式禁止继承覆盖。每次重跑都会生成新的历史 ID，所以错误中的 ID 可能不同于重跑的原 ID。
+
+`ah history clean`（`ah h clean`）删除 success/failed/canceled 历史并显示删除条数，保留 running 记录以免干扰进行中的复制；不重置历史 ID。仅清理 `--history-file` 指定的历史库，不删除连接配置或复制文件。此操作不能撤销，agent 仅在用户要求清理历史时执行。
+
+历史清理支持筛选：
+
+```sh
+ah h clean --failed                # 仅删除失败记录
+ah h clean --keep-days 7           # 保留最近 7 天，删除更早的已结束记录
+ah h clean --failed --keep-days 7  # 仅删除 7 天前的失败记录
+```
+
+天数取值 1–36500，按开始时间计算，每天为 24 小时；条件组合取交集，截止时间及之后的记录保留。running 始终保留；不带筛选时仍清理全部已结束记录。

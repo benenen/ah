@@ -63,7 +63,33 @@ func (a *app) historyCommand() *cobra.Command {
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), command)
 		return err
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "run ID", Short: "Repeat a recorded copy and append a new history entry", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	var failedOnly bool
+	var keepDays int
+	clean := &cobra.Command{Use: "clean", Short: "Delete finished copy history records (keep running copies)", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		opts := history.CleanOptions{FailedOnly: failedOnly}
+		if cmd.Flags().Changed("keep-days") {
+			if keepDays < 1 || keepDays > 36500 {
+				return fmt.Errorf("--keep-days must be between 1 and 36500")
+			}
+			opts.Before = time.Now().Add(-time.Duration(keepDays) * 24 * time.Hour)
+		}
+		store, err := a.openHistory()
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		count, err := store.Clean(cmd.Context(), opts)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Removed %d history records; running copies retained\n", count)
+		return err
+	}}
+	clean.Flags().BoolVar(&failedOnly, "failed", false, "delete only failed records")
+	clean.Flags().IntVar(&keepDays, "keep-days", 0, "retain the last N days; delete older records by start time (1-36500)")
+	cmd.AddCommand(clean)
+	var force bool
+	run := &cobra.Command{Use: "run ID", Short: "Repeat a recorded copy and append a new history entry", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		record, err := a.historyRecord(cmd, args[0])
 		if err != nil {
 			return err
@@ -78,9 +104,14 @@ func (a *app) historyCommand() *cobra.Command {
 		if !cmd.Flags().Changed("key-file") {
 			replay.keyPath = record.KeyPath
 		}
+		if cmd.Flags().Changed("force") {
+			record.Force = force
+		}
 		// Structured invocation, never shell evaluation of data from SQLite.
 		return replay.copyWithHistory(cmd, record.Source, record.Destination, record.Force, record.Cwd)
-	}})
+	}}
+	run.Flags().BoolVarP(&force, "force", "f", false, "override recorded overwrite behavior (use --force=false to prevent replacement)")
+	cmd.AddCommand(run)
 	return cmd
 }
 func (a *app) historyRecord(cmd *cobra.Command, value string) (history.Record, error) {

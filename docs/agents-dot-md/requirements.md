@@ -83,3 +83,17 @@ SSH 统一拨号路径用于 connect/c/cp/远程补全；第一跳本机解析�
 兼容旧 proxy 字符串（与 proxies 互斥）、socks5h URL、代理 URL 认证和 --no-sudo。代理 URL 认证信息原样存储，不属于加密密码。旧 sudo 密文按旧连接名绑定解密，新密码使用独立 sudo 绑定；不再隐式复用 SSH 密码。
 
 命令统一支持 connect/c、copy/cp、edit/e、history/h、list/ls、new/n、remove/rm；顶层 help 显示简写，子命令帮助显示别名。-h 仍为帮助标志。
+
+history run ID 支持 --force/-f 和 --force=false 显式覆盖原 force；未指定则继承原值，新历史记录保存最终生效值。
+
+`ah history clean`（`ah h clean`）删除 success/failed/canceled 历史并显示删除条数，保留 running 记录以免干扰进行中的复制；不重置历史 ID。仅清理 `--history-file` 指定的历史库，不删除连接配置或复制文件。此操作不能撤销，agent 仅在用户要求清理历史时执行。
+
+历史清理支持筛选：
+
+```sh
+ah h clean --failed                # 仅删除失败记录
+ah h clean --keep-days 7           # 保留最近 7 天，删除更早的已结束记录
+ah h clean --failed --keep-days 7  # 仅删除 7 天前的失败记录
+```
+
+天数取值 1–36500，按开始时间计算，每天为 24 小时；条件组合取交集，截止时间及之后的记录保留。running 始终保留；不带筛选时仍清理全部已结束记录。
