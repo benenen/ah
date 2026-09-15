@@ -69,7 +69,12 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 		if err != nil {
 			return err
 		}
-		terminal := os.Getenv("TERM")
+		// A server whose terminfo lacks the local TERM degrades line editing, so
+		// the connection may pin a name the remote side is known to have.
+		terminal := c.term
+		if terminal == "" {
+			terminal = os.Getenv("TERM")
+		}
 		if terminal == "" {
 			terminal = "xterm-256color"
 		}

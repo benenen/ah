@@ -49,6 +49,8 @@ ah new C --host c.example.com --user carol --password --sudo
 ah edit C --sudo-password     # 单独设置并加密保存 sudo 密码
 ah edit C --no-sudo           # 关闭自动 sudo
 ah edit C --clear-sudo-password   # 删除保存的 sudo 密码，需要时交互输入
+ah edit C --term xterm-256color   # 远端 terminfo 没有本地 TERM 时固定一个它认识的名字
+ah edit C --clear-term            # 恢复使用本地 $TERM
 ah rm B
 ah c A                  # 打开交互 SSH 命令行
 ah connect A                 # 等价命令
@@ -68,6 +70,8 @@ ah --timeout 15s c nas uname -a
 远程命令模式不申请 PTY，支持标准输入管道，分别转发 stdout/stderr，并保留远端非零退出码。连接名 Tab 补全和原有认证选项继续可用。
 
 启用 `--sudo` 后，`connect/c`、`cp` 的远端操作和远程补全均以 root 执行。sudo 请求密码时解密独立保存的 sudo 密码；未保存则在交互终端隐藏输入，免密 sudo 不要求密码。SSH 登录密码不自动用于 sudo。补全不弹提示，需要保存的 sudo 密码或免密 sudo。sudo 复制需要远端独立 `sftp-server`，可用 `edit NAME --sftp-server /usr/lib/openssh/sftp-server` 指定路径。旧版加密 sudo 密码和 `--no-sudo` 用法仍兼容。
+
+交互会话按 OpenSSH 的做法申请 PTY：把本地终端设置（erase 等控制字符、IUTF8 等标志、波特率）随请求发给远端，并转发本地 `TERM`。如果远端 terminfo 数据库里没有这个终端类型（例如 Ghostty 的 `xterm-ghostty` 遇上较旧的发行版），readline 会退化成哑终端行为，最典型的症状是退格只让光标移动、字符不消失。此时用 `edit NAME --term xterm-256color` 为该连接固定一个远端认识的名字，或临时用全局选项 `ah --term xterm-256color c NAME` 覆盖；优先级为 `--term` > 连接配置 `term` > 本地 `$TERM`。另一种做法是把本地 terminfo 装到远端：`infocmp -x $TERM | ah c NAME 'tic -x -'`。
 
 连接别名只允许字母、数字、下划线和连字符，首字符必须为字母或数字。`new` 要求 host 和 user；`edit` 只修改明确传入的字段。`rm` 仅删除连接配置。
 

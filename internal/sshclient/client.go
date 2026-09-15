@@ -25,7 +25,9 @@ type Options struct {
 	SudoPassword func(context.Context) ([]byte, error)
 	PasswordOnly bool
 	KnownHosts   string
-	Timeout      time.Duration
+	// Term overrides the connection's configured TERM for this call.
+	Term    string
+	Timeout time.Duration
 	// Callbacks run synchronously and must arrange their own cancellation.
 	Password   func() (string, error)
 	Passphrase func(string) ([]byte, error)
@@ -38,6 +40,7 @@ type Client struct {
 	sudo         bool
 	sftpServer   string
 	sudoShell    string
+	term         string
 	sudoPassword func(context.Context) ([]byte, error)
 	client       *ssh.Client
 	conn         net.Conn
@@ -127,7 +130,11 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		sc.Close()
 		return nil, err
 	}
-	return &Client{client: ssh.NewClient(sc, ch, reqs), conn: conn, stop: stop, ctx: ctx, timeout: opts.Timeout, sudo: c.Sudo, sftpServer: c.SFTPServer, sudoShell: c.SudoShell, sudoPassword: opts.SudoPassword}, nil
+	terminal := opts.Term
+	if terminal == "" {
+		terminal = c.Term
+	}
+	return &Client{client: ssh.NewClient(sc, ch, reqs), conn: conn, stop: stop, ctx: ctx, timeout: opts.Timeout, sudo: c.Sudo, sftpServer: c.SFTPServer, sudoShell: c.SudoShell, term: terminal, sudoPassword: opts.SudoPassword}, nil
 }
 
 func authentication(ctx context.Context, c config.Connection, opts Options) ([]ssh.AuthMethod, net.Conn, error) {

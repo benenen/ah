@@ -16,6 +16,7 @@ type app struct {
 	historyPath  string
 	keyPath      string
 	knownHosts   string
+	term         string
 	timeout      time.Duration
 	trustNewHost bool
 }
@@ -27,6 +28,7 @@ func New() *cobra.Command {
 	root.PersistentFlags().StringVar(&a.historyPath, "history-file", "", "copy history SQLite file (default: user config directory/ah/history.db)")
 	root.PersistentFlags().StringVar(&a.keyPath, "key-file", "", "password encryption key file (default: user config directory/ah/master.key)")
 	root.PersistentFlags().StringVar(&a.knownHosts, "known-hosts", "", "SSH known_hosts file (default: ~/.ssh/known_hosts)")
+	root.PersistentFlags().StringVar(&a.term, "term", "", "TERM for interactive sessions, overriding the connection's saved value and $TERM")
 	root.PersistentFlags().DurationVar(&a.timeout, "timeout", 10*time.Second, "SSH connection and handshake timeout")
 	root.PersistentFlags().BoolVar(&a.trustNewHost, "trust-new-host", false, "explicitly trust and save previously unknown host keys (changed keys still fail)")
 	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {

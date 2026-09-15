@@ -13,7 +13,7 @@ import (
 )
 
 func (a *app) sshOptions(cmd *cobra.Command) sshclient.Options {
-	opts := sshclient.Options{KnownHosts: a.knownHosts, Timeout: a.timeout}
+	opts := sshclient.Options{KnownHosts: a.knownHosts, Timeout: a.timeout, Term: a.term}
 	if input, ok := cmd.InOrStdin().(*os.File); ok && term.IsTerminal(int(input.Fd())) {
 		read := func(prompt string) ([]byte, error) {
 			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout)

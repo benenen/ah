@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/benenen/ah/internal/config"
@@ -226,5 +227,116 @@ func TestShellPTYRestoresTerminal(t *testing.T) {
 	}
 	if err = <-serverResult; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// requestedTerm reports the TERM a shell sends with pty-req.
+func requestedTerm(t *testing.T, connectionTerm, optionTerm string) string {
+	t.Helper()
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &ssh.ServerConfig{NoClientAuth: true}
+	cfg.AddHostKey(signer)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	terms := make(chan string, 1)
+	go func() {
+		raw, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer raw.Close()
+		server, chans, requests, err := ssh.NewServerConn(raw, cfg)
+		if err != nil {
+			return
+		}
+		defer server.Close()
+		go ssh.DiscardRequests(requests)
+		ch, ok := <-chans
+		if !ok {
+			return
+		}
+		channel, reqs, err := ch.Accept()
+		if err != nil {
+			return
+		}
+		defer channel.Close()
+		for req := range reqs {
+			switch req.Type {
+			case "pty-req":
+				// RFC 4254 pty-req starts with the TERM string.
+				if len(req.Payload) >= 4 {
+					size := binary.BigEndian.Uint32(req.Payload)
+					if int(size) <= len(req.Payload)-4 {
+						terms <- string(req.Payload[4 : 4+size])
+					}
+				}
+				_ = req.Reply(true, nil)
+			case "shell":
+				_ = req.Reply(true, nil)
+				_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+				return
+			default:
+				_ = req.Reply(false, nil)
+			}
+		}
+	}()
+	master, terminal, err := pty.Open()
+	if err != nil {
+		t.Skip("pty unavailable:", err)
+	}
+	defer master.Close()
+	defer terminal.Close()
+	t.Setenv("SSH_AUTH_SOCK", "")
+	t.Setenv("HOME", t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := config.Connection{Host: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, User: "test", Term: connectionTerm}
+	opts := Options{KnownHosts: filepath.Join(t.TempDir(), "hosts"), Term: optionTerm, TrustHost: func(string, string) (bool, error) { return true, nil }}
+	client, err := Dial(ctx, c, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err = client.Shell(terminal, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case value := <-terms:
+		return value
+	default:
+		t.Fatal("no pty-req was sent")
+		return ""
+	}
+}
+
+// A server without the local terminfo entry degrades line editing, so the saved
+// name must win over $TERM and an explicit override over both.
+func TestShellSendsConfiguredTerm(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	for _, tc := range []struct {
+		name       string
+		connection string
+		option     string
+		want       string
+	}{
+		{name: "environment", want: "xterm-ghostty"},
+		{name: "connection", connection: "screen-256color", want: "screen-256color"},
+		{name: "override", connection: "screen-256color", option: "xterm-256color", want: "xterm-256color"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := requestedTerm(t, tc.connection, tc.option); got != tc.want {
+				t.Fatalf("term %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

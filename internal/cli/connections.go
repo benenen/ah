@@ -31,6 +31,7 @@ func connectionFlags(cmd *cobra.Command, c *config.Connection) {
 	cmd.Flags().BoolVar(&c.Sudo, "sudo", false, "run SSH commands and remote file operations as root")
 	cmd.Flags().StringVar(&c.SFTPServer, "sftp-server", "", "absolute remote SFTP server path for sudo (empty to detect common paths)")
 	cmd.Flags().StringVar(&c.SudoShell, "sudo-shell", "", "login shell for an escalated interactive session (default bash, falls back to /bin/sh)")
+	cmd.Flags().StringVar(&c.Term, "term", "", "TERM to send for interactive sessions (empty to use $TERM)")
 	cmd.Flags().StringArrayVar(&c.Proxies, "proxy", nil, "SOCKS5 HOST:PORT or socks5://HOST:PORT; repeat in hop order")
 	cmd.Flags().StringVar(&c.Host, "host", "", "hostname or IP address")
 	cmd.Flags().IntVarP(&c.Port, "port", "p", 22, "SSH port")
@@ -89,7 +90,7 @@ func (a *app) newCommand() *cobra.Command {
 }
 func (a *app) editCommand() *cobra.Command {
 	var changes config.Connection
-	var password, clearPassword, clearProxy, sudoPassword, clearSudoPassword, clearSudoShell, noSudo bool
+	var password, clearPassword, clearProxy, sudoPassword, clearSudoPassword, clearSudoShell, clearTerm, noSudo bool
 	cmd := &cobra.Command{Use: "edit NAME [flags]", Aliases: []string{"e"}, Short: "Update only the supplied connection fields", Args: cobra.ExactArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := a.store()
 		if err != nil {
@@ -135,6 +136,12 @@ func (a *app) editCommand() *cobra.Command {
 			}
 			if clearSudoShell {
 				c.SudoShell = ""
+			}
+			if cmd.Flags().Changed("term") {
+				c.Term = changes.Term
+			}
+			if clearTerm {
+				c.Term = ""
 			}
 			if sudoPassword {
 				c.SudoPassword = encryptedSudo
@@ -192,6 +199,8 @@ func (a *app) editCommand() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("sudo-password", "clear-sudo-password")
 	cmd.Flags().BoolVar(&clearSudoShell, "clear-sudo-shell", false, "reset the escalated interactive shell to the default (bash)")
 	cmd.MarkFlagsMutuallyExclusive("sudo-shell", "clear-sudo-shell")
+	cmd.Flags().BoolVar(&clearTerm, "clear-term", false, "remove the saved TERM and fall back to $TERM")
+	cmd.MarkFlagsMutuallyExclusive("term", "clear-term")
 	return cmd
 }
 func (a *app) removeCommand() *cobra.Command {

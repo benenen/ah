@@ -26,7 +26,10 @@ type Connection struct {
 	SFTPServer   string `toml:"sftp_server,omitempty"`
 	// SudoShell is the login shell to exec for an escalated interactive session;
 	// empty means the built-in default (bash, falling back to /bin/sh).
-	SudoShell    string   `toml:"sudo_shell,omitempty"`
+	SudoShell string `toml:"sudo_shell,omitempty"`
+	// Term overrides the TERM sent with pty-req, for servers whose terminfo
+	// database lacks the local terminal; empty means the local $TERM.
+	Term         string   `toml:"term,omitempty"`
 	Host         string   `toml:"host"`
 	Port         int      `toml:"port"`
 	User         string   `toml:"user"`
@@ -66,6 +69,9 @@ func (c Connection) Validate() error {
 	}
 	if c.SudoShell != "" && strings.ContainsFunc(c.SudoShell, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
 		return fmt.Errorf("sudo_shell must be a shell path or name without whitespace or control characters")
+	}
+	if c.Term != "" && strings.ContainsFunc(c.Term, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return fmt.Errorf("term must be a terminfo name without whitespace or control characters")
 	}
 
 	if c.Proxy != "" && !strings.Contains(c.Proxy, "://") {
