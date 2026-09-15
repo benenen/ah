@@ -20,10 +20,13 @@ import (
 
 type Connection struct {
 	// Proxy retains compatibility with existing single-proxy configurations.
-	Proxy        string   `toml:"proxy,omitempty"`
-	Sudo         bool     `toml:"sudo,omitempty"`
-	SudoPassword string   `toml:"sudo_password,omitempty"`
-	SFTPServer   string   `toml:"sftp_server,omitempty"`
+	Proxy        string `toml:"proxy,omitempty"`
+	Sudo         bool   `toml:"sudo,omitempty"`
+	SudoPassword string `toml:"sudo_password,omitempty"`
+	SFTPServer   string `toml:"sftp_server,omitempty"`
+	// SudoShell is the login shell to exec for an escalated interactive session;
+	// empty means the built-in default (bash, falling back to /bin/sh).
+	SudoShell    string   `toml:"sudo_shell,omitempty"`
 	Host         string   `toml:"host"`
 	Port         int      `toml:"port"`
 	User         string   `toml:"user"`
@@ -60,6 +63,9 @@ func (c Connection) Validate() error {
 	}
 	if c.SFTPServer != "" && (!strings.HasPrefix(c.SFTPServer, "/") || strings.ContainsFunc(c.SFTPServer, unicode.IsControl)) {
 		return fmt.Errorf("sftp_server must be an absolute remote path without control characters")
+	}
+	if c.SudoShell != "" && strings.ContainsFunc(c.SudoShell, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return fmt.Errorf("sudo_shell must be a shell path or name without whitespace or control characters")
 	}
 
 	if c.Proxy != "" && !strings.Contains(c.Proxy, "://") {

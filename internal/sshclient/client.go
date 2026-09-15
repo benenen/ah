@@ -37,6 +37,7 @@ type Client struct {
 	timeout      time.Duration
 	sudo         bool
 	sftpServer   string
+	sudoShell    string
 	sudoPassword func(context.Context) ([]byte, error)
 	client       *ssh.Client
 	conn         net.Conn
@@ -126,7 +127,7 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		sc.Close()
 		return nil, err
 	}
-	return &Client{client: ssh.NewClient(sc, ch, reqs), conn: conn, stop: stop, ctx: ctx, timeout: opts.Timeout, sudo: c.Sudo, sftpServer: c.SFTPServer, sudoPassword: opts.SudoPassword}, nil
+	return &Client{client: ssh.NewClient(sc, ch, reqs), conn: conn, stop: stop, ctx: ctx, timeout: opts.Timeout, sudo: c.Sudo, sftpServer: c.SFTPServer, sudoShell: c.SudoShell, sudoPassword: opts.SudoPassword}, nil
 }
 
 func authentication(ctx context.Context, c config.Connection, opts Options) ([]ssh.AuthMethod, net.Conn, error) {

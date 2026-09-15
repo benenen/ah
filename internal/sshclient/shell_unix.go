@@ -163,7 +163,14 @@ func (r *shellInput) Read(p []byte) (int, error) {
 func (c *Client) runSudoSession(ctx context.Context, finishSetup func(), session *ssh.Session, command string, interactive bool, stdin *os.File, stdout, stderr io.Writer) error {
 	action := "exec /bin/sh -c " + shellQuote(command)
 	if interactive {
-		action = `cd "$HOME" && exec /bin/sh -l`
+		// Default the escalated login shell to bash, falling back to /bin/sh when
+		// the configured shell is unavailable, so the session never dies silently.
+		shell := c.sudoShell
+		if shell == "" {
+			shell = "bash"
+		}
+		q := shellQuote(shell)
+		action = `cd "$HOME"; if command -v ` + q + ` >/dev/null 2>&1; then exec ` + q + ` -l; else exec /bin/sh -l; fi`
 	}
 	stream, err := c.startSudo(ctx, session, action, stderr, interactive && stdin != nil && term.IsTerminal(int(stdin.Fd())))
 	finishSetup()
