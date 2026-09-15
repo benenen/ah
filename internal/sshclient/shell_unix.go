@@ -73,11 +73,13 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 		if terminal == "" {
 			terminal = "xterm-256color"
 		}
-		echo := uint32(1)
+		// Read the local settings before MakeRaw so the remote PTY mirrors the
+		// real terminal; sudo keeps echo off until authentication finishes.
+		modes := terminalModes(fd)
 		if c.sudo {
-			echo = 0
+			modes[ssh.ECHO] = 0
 		}
-		if err = session.RequestPty(terminal, height, width, ssh.TerminalModes{ssh.ECHO: echo, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400}); err != nil {
+		if err = session.RequestPty(terminal, height, width, modes); err != nil {
 			if c.sudo && setupCtx.Err() != nil {
 				return setupCtx.Err()
 			}

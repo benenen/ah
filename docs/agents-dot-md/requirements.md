@@ -69,6 +69,8 @@ user = "bob"
 
 连接名后的参数按 SSH 方式用空格连接，交给远程 shell 解析；ah 自身选项必须位于连接名前，之后的选项属于远程命令。命令模式不申请 PTY、不将本地终端改为 raw，转发 stdin/stdout/stderr，保留远程退出码；完成或取消时停止输入转发并关闭连接，保留调用方 stdin。无命令时维持既有交互终端行为。
 
+交互模式申请 PTY 时，按 OpenSSH 的做法在切换 raw 前读取本地终端设置，把控制字符、输入/输出/本地标志和真实波特率随 pty-req 发给远端；erase 键与 IUTF8 必须生效，否则 backspace 在 canonical 输入下会按字节删除多字节字符。CS7/CS8 共用 CSIZE 位且服务端按任意顺序应用，只发送当前实际字宽；sudo 认证期间仍强制关闭回显。
+
 ## SOCKS5 代理契约
 
 连接 TOML 的 proxies 字符串数组按跳序保存代理。new/edit 支持重复 --proxy，edit 替换整条链，--clear-proxy 恢复直连；未指定时保留已有配置。地址支持 HOST:PORT 或 socks5://HOST:PORT（IPv6 必须加方括号），同时支持 socks5h URL 和代理认证；代理凭据原样存储，错误不得回显凭据。
