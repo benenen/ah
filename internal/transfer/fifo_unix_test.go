@@ -30,7 +30,7 @@ func TestCopyRejectsFIFOWithoutOpeningIt(t *testing.T) {
 		}
 	}()
 	start := time.Now()
-	_, err := Copy(context.Background(), src, dst, fifo, filepath.Join(dir, "out"), false)
+	_, err := Copy(context.Background(), src, dst, fifo, filepath.Join(dir, "out"), false, nil)
 	elapsed := time.Since(start)
 	<-released
 	if err == nil {
@@ -59,7 +59,7 @@ func TestCopyRejectsLocalFIFOWithoutOpeningIt(t *testing.T) {
 		}
 	}()
 	start := time.Now()
-	_, err := Copy(context.Background(), nil, nil, fifo, filepath.Join(dir, "out"), false)
+	_, err := Copy(context.Background(), nil, nil, fifo, filepath.Join(dir, "out"), false, nil)
 	elapsed := time.Since(start)
 	<-released
 	if err == nil {

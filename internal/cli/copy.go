@@ -100,7 +100,10 @@ func (a *app) performCopy(cmd *cobra.Command, source, target string, force bool,
 		return 0, fmt.Errorf("destination: %w", err)
 	}
 	defer closeTarget()
-	return transfer.Copy(cmd.Context(), sourceClient, targetClient, src.Path, dst.Path, force)
+	bar := newProgressBar(cmd.ErrOrStderr())
+	n, err := transfer.Copy(cmd.Context(), sourceClient, targetClient, src.Path, dst.Path, force, bar.update)
+	bar.finish()
+	return n, err
 }
 
 func resolveCopyEndpoint(value, cwd string) (transfer.Endpoint, error) {

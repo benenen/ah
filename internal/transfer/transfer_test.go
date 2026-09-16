@@ -58,7 +58,7 @@ func TestCopyPublishesAndProtectsDestination(t *testing.T) {
 	if err := os.WriteFile(source, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	n, err := Copy(context.Background(), src, dst, source, target, false)
+	n, err := Copy(context.Background(), src, dst, source, target, false, nil)
 	if err != nil || n != int64(len(data)) {
 		t.Fatalf("copy n=%d err=%v", n, err)
 	}
@@ -69,14 +69,14 @@ func TestCopyPublishesAndProtectsDestination(t *testing.T) {
 	if err := os.WriteFile(source, []byte("replacement"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Copy(context.Background(), src, dst, source, target, false); err == nil {
+	if _, err := Copy(context.Background(), src, dst, source, target, false, nil); err == nil {
 		t.Fatal("overwrote existing file")
 	}
 	got, _ = os.ReadFile(target)
 	if string(got) != data {
 		t.Fatal("original changed on refusal")
 	}
-	if _, err := Copy(context.Background(), src, dst, source, target, true); err != nil {
+	if _, err := Copy(context.Background(), src, dst, source, target, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = os.ReadFile(target)
@@ -100,20 +100,20 @@ func TestCopyDirectoryAndFailures(t *testing.T) {
 	if err := os.Mkdir(targetDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Copy(context.Background(), src, dst, source, targetDir, false); err != nil {
+	if _, err := Copy(context.Background(), src, dst, source, targetDir, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if b, err := os.ReadFile(filepath.Join(targetDir, "file")); err != nil || string(b) != "hello" {
 		t.Fatal("directory copy failed", err)
 	}
 	for _, sourcePath := range []string{dir, filepath.Join(dir, "missing")} {
-		if _, err := Copy(context.Background(), src, dst, sourcePath, filepath.Join(dir, "never"), false); err == nil {
+		if _, err := Copy(context.Background(), src, dst, sourcePath, filepath.Join(dir, "never"), false, nil); err == nil {
 			t.Fatal("accepted invalid source")
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Copy(ctx, src, dst, source, filepath.Join(dir, "canceled"), false); err == nil {
+	if _, err := Copy(ctx, src, dst, source, filepath.Join(dir, "canceled"), false, nil); err == nil {
 		t.Fatal("ignored cancellation")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "canceled")); !os.IsNotExist(err) {
@@ -135,8 +135,8 @@ func TestConcurrentCopyDoesNotClobber(t *testing.T) {
 	s1, d1, s2, d2 := localSFTP(t), localSFTP(t), localSFTP(t), localSFTP(t)
 	results := make(chan error, 2)
 	start := make(chan struct{})
-	go func() { <-start; _, err := Copy(context.Background(), s1, d1, one, target, false); results <- err }()
-	go func() { <-start; _, err := Copy(context.Background(), s2, d2, two, target, false); results <- err }()
+	go func() { <-start; _, err := Copy(context.Background(), s1, d1, one, target, false, nil); results <- err }()
+	go func() { <-start; _, err := Copy(context.Background(), s2, d2, two, target, false, nil); results <- err }()
 	close(start)
 	first, second := <-results, <-results
 	if (first == nil) == (second == nil) {
@@ -192,7 +192,7 @@ func testCopyCancellationUnblocksRemoteIO(t *testing.T, localDestination bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	result := make(chan error, 1)
-	go func() { _, err := Copy(ctx, src, dst, source, source+"-target", false); result <- err }()
+	go func() { _, err := Copy(ctx, src, dst, source, source+"-target", false, nil); result <- err }()
 	select {
 	case <-gate.started:
 	case <-time.After(time.Second):
@@ -252,7 +252,7 @@ func TestCopyLocalEndpoints(t *testing.T) {
 			if err := os.WriteFile(source, []byte(data), 0640); err != nil {
 				t.Fatal(err)
 			}
-			n, err := Copy(context.Background(), src, dst, source, target, false)
+			n, err := Copy(context.Background(), src, dst, source, target, false, nil)
 			if err != nil || n != int64(len(data)) {
 				t.Fatalf("copy %d %v", n, err)
 			}
@@ -264,14 +264,14 @@ func TestCopyLocalEndpoints(t *testing.T) {
 			if err := os.WriteFile(source, []byte("replacement"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Copy(context.Background(), src, dst, source, target, false); err == nil {
+			if _, err := Copy(context.Background(), src, dst, source, target, false, nil); err == nil {
 				t.Fatal("clobbered")
 			}
 			got, _ = os.ReadFile(out)
 			if string(got) != data {
 				t.Fatal("refusal changed output")
 			}
-			if _, err := Copy(context.Background(), src, dst, source, target, true); err != nil {
+			if _, err := Copy(context.Background(), src, dst, source, target, true, nil); err != nil {
 				t.Fatal(err)
 			}
 			got, _ = os.ReadFile(out)
@@ -282,12 +282,12 @@ func TestCopyLocalEndpoints(t *testing.T) {
 			if len(entries) != 1 {
 				t.Fatalf("leaked staging files: %v", entries)
 			}
-			if _, err := Copy(context.Background(), src, dst, dir, out, true); err == nil {
+			if _, err := Copy(context.Background(), src, dst, dir, out, true, nil); err == nil {
 				t.Fatal("accepted directory")
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			if _, err := Copy(ctx, src, dst, source, out, true); !errors.Is(err, context.Canceled) {
+			if _, err := Copy(ctx, src, dst, source, out, true, nil); !errors.Is(err, context.Canceled) {
 				t.Fatalf("cancel: %v", err)
 			}
 		})
@@ -324,7 +324,11 @@ func TestConcurrentLocalCopyDoesNotClobber(t *testing.T) {
 		if err := os.WriteFile(source, []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
-		go func() { <-start; _, err := Copy(context.Background(), nil, nil, source, target, false); results <- err }()
+		go func() {
+			<-start
+			_, err := Copy(context.Background(), nil, nil, source, target, false, nil)
+			results <- err
+		}()
 	}
 	close(start)
 	first, second := <-results, <-results

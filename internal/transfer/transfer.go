@@ -55,7 +55,10 @@ func ResolvePath(client *sftp.Client, p string) (string, error) {
 // The destination is staged in the same directory; a hard link atomically publishes
 // without clobbering, while --force atomically renames. SFTP destinations require
 // the corresponding OpenSSH extension.
-func Copy(ctx context.Context, src, dst *sftp.Client, source, target string, force bool) (n int64, err error) {
+// Copy streams one regular file between the given filesystems. When progress is
+// non-nil it is called with the running and total byte counts during transfer;
+// the callback must be cheap and non-blocking.
+func Copy(ctx context.Context, src, dst *sftp.Client, source, target string, force bool, progress func(copied, total int64)) (n int64, err error) {
 	if err = ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -156,7 +159,11 @@ func Copy(ctx context.Context, src, dst *sftp.Client, source, target string, for
 		return 0, fmt.Errorf("restrict temporary file permissions: %w", err)
 	}
 	// Wrappers prevent io.Copy from invoking optimized methods that bypass the bounded buffer.
-	n, err = io.CopyBuffer(contextWriter{ctx, out}, contextReader{ctx, in}, make([]byte, 128*1024))
+	var reader io.Reader = contextReader{ctx, in}
+	if progress != nil {
+		reader = &progressReader{in: reader, total: info.Size(), cb: progress}
+	}
+	n, err = io.CopyBuffer(contextWriter{ctx, out}, reader, make([]byte, 128*1024))
 	if err != nil {
 		return n, fmt.Errorf("transfer data: %w", err)
 	}
@@ -286,6 +293,24 @@ func (f filesystem) dir(p string) string {
 		return filepath.Dir(p)
 	}
 	return path.Dir(p)
+}
+
+// progressReader reports cumulative bytes read to a callback for progress display.
+// It deliberately implements only Read so io.CopyBuffer keeps using the bounded buffer.
+type progressReader struct {
+	in     io.Reader
+	total  int64
+	copied int64
+	cb     func(copied, total int64)
+}
+
+func (r *progressReader) Read(p []byte) (int, error) {
+	n, err := r.in.Read(p)
+	if n > 0 {
+		r.copied += int64(n)
+		r.cb(r.copied, r.total)
+	}
+	return n, err
 }
 
 type contextReader struct {
