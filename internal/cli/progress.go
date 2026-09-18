@@ -57,7 +57,8 @@ func (b *progressBar) update(copied, total int64) {
 	if elapsed := now.Sub(b.start).Seconds(); elapsed > 0 {
 		rate = "  " + humanBytes(int64(float64(copied)/elapsed)) + "/s"
 	}
-	fmt.Fprintf(b.w, "\r[%s] %3.0f%%  %s/%s%s", bar, pct*100, humanBytes(copied), humanBytes(total), rate)
+	// Clear the old suffix when a shorter rate makes this frame narrower.
+	fmt.Fprintf(b.w, "\r[%s] %3.0f%%  %s/%s%s\033[K", bar, pct*100, humanBytes(copied), humanBytes(total), rate)
 }
 
 // finish clears the progress line so a following stdout summary starts clean.
