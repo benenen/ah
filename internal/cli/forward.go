@@ -21,8 +21,9 @@ func (a *app) forwardCommand() *cobra.Command {
 	var daemon bool
 	var worker string
 	cmd := &cobra.Command{
-		Use:   "forward NAME LOCAL_PORT_OR_ADDRESS TARGET_PORT_OR_ADDRESS",
-		Short: "Forward a local TCP port through SSH",
+		Use:     "forward NAME LOCAL_PORT_OR_ADDRESS TARGET_PORT_OR_ADDRESS",
+		Short:   "Forward a local TCP port through SSH",
+		Aliases: []string{"f"},
 		Long: `通过 SSH 转发本地 TCP 端口。
 
 参数顺序：ah forward NAME 本地监听端口 SSH服务器侧目标端口

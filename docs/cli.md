@@ -53,6 +53,7 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | `connect` | `c` |
 | `copy` | `cp` |
 | `edit` | `e` |
+| `forward` | `f` |
 | `history` | `h` |
 | `list` | `ls` |
 | `new` | `n` |
@@ -73,7 +74,7 @@ ah forward ls
 ah forward kill <ID>
 ```
 
-用法为 `ah forward NAME LOCAL TARGET`，两个地址分别传参，不使用 `-L`。
+用法为 `ah forward NAME LOCAL TARGET`，可简写为 `ah f NAME LOCAL TARGET`，两个地址分别传参，不使用 `-L`。
 
 - `NAME`：已保存的 SSH 连接名。
 - 第一个端口 `LOCAL`：**本地监听端口**，例如 `8080` 或 `0.0.0.0:8080`。
