@@ -33,28 +33,28 @@ type SSHServer struct {
 
 func StartSSH(t *testing.T) *SSHServer {
 	t.Helper()
-	return startSSH(t, nil, nil, false)
+	return startSSH(t, nil, nil, false, nil)
 }
 
 // StartPasswordSSH starts a server that accepts only the supplied password.
 func StartPasswordSSH(t *testing.T, password string) *SSHServer {
 	t.Helper()
-	return startSSH(t, &password, nil, false)
+	return startSSH(t, &password, nil, false, nil)
 }
 
 // StartCommandSSH accepts exec requests but refuses PTY requests.
 func StartCommandSSH(t *testing.T, handler func(string, ssh.Channel) uint32) *SSHServer {
 	t.Helper()
-	return startSSH(t, nil, handler, false)
+	return startSSH(t, nil, handler, false, nil)
 }
 
 // StartPTYCommandSSH also accepts PTY requests; handlers emulate the merged stream.
 func StartPTYCommandSSH(t *testing.T, handler func(string, ssh.Channel) uint32) *SSHServer {
 	t.Helper()
-	return startSSH(t, nil, handler, true)
+	return startSSH(t, nil, handler, true, nil)
 }
 
-func startSSH(t *testing.T, password *string, handler func(string, ssh.Channel) uint32, allowPTY bool) *SSHServer {
+func startSSH(t *testing.T, password *string, handler func(string, ssh.Channel) uint32, allowPTY bool, forward func(ssh.NewChannel)) *SSHServer {
 	t.Helper()
 	root := t.TempDir()
 	_, hostKey, err := ed25519.GenerateKey(rand.Reader)
@@ -125,14 +125,14 @@ func startSSH(t *testing.T, password *string, handler func(string, ssh.Channel) 
 			f.conns[conn] = true
 			f.wg.Add(1)
 			f.mu.Unlock()
-			go f.serve(conn, cfg, handler, allowPTY)
+			go f.serve(conn, cfg, handler, allowPTY, forward)
 		}
 	}()
 	t.Cleanup(f.Close)
 	return f
 }
 
-func (f *SSHServer) serve(conn net.Conn, cfg *ssh.ServerConfig, handler func(string, ssh.Channel) uint32, allowPTY bool) {
+func (f *SSHServer) serve(conn net.Conn, cfg *ssh.ServerConfig, handler func(string, ssh.Channel) uint32, allowPTY bool, forward func(ssh.NewChannel)) {
 	defer f.wg.Done()
 	defer conn.Close()
 	defer func() { f.mu.Lock(); delete(f.conns, conn); f.mu.Unlock() }()
@@ -145,6 +145,10 @@ func (f *SSHServer) serve(conn net.Conn, cfg *ssh.ServerConfig, handler func(str
 	var sessions sync.WaitGroup
 	defer sessions.Wait()
 	for ch := range channels {
+		if ch.ChannelType() == "direct-tcpip" && forward != nil {
+			sessions.Go(func() { forward(ch) })
+			continue
+		}
 		if ch.ChannelType() != "session" {
 			ch.Reject(ssh.UnknownChannelType, "session required")
 			continue
@@ -197,4 +201,10 @@ func (f *SSHServer) Close() {
 	}
 	f.mu.Unlock()
 	f.wg.Wait()
+}
+
+// StartForwardSSH handles direct-tcpip channels with a test-supplied destination.
+func StartForwardSSH(t *testing.T, handler func(ssh.NewChannel)) *SSHServer {
+	t.Helper()
+	return startSSH(t, nil, nil, false, handler)
 }

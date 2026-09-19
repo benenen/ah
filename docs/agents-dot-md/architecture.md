@@ -10,6 +10,7 @@
 - `internal/history/`：SQLite 历史持久化、状态更新与关键词查询。
 - `internal/config/`：连接模型、TOML 编解码、校验与原子保存。
 - `internal/sshclient/`：SSH/SOCKS5 多跳连接、认证、主机密钥校验、sudo 提权握手、会话与 SFTP 生命周期。
+- `internal/forward/`：转发 ID、状态持久化、私有控制通道与查询/停止；CLI 管理后台进程启动，SSH 层负责 TCP 数据转发。
 - `internal/transfer/`：本地/远端源目标解析与流式复制。
 - `internal/completion/`：连接名、本地与远程路径候选查询。
 

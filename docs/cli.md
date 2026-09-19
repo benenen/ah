@@ -8,6 +8,7 @@
 - [全局选项](#全局选项)
 - [连接管理](#连接管理)
 - [交互登录与远程命令](#交互登录与远程命令)
+- [本地端口转发](#本地端口转发)
 - [文件复制](#文件复制)
 - [历史查询与重跑](#历史查询与重跑)
 - [SOCKS5 代理链](#socks5-代理链)
@@ -37,6 +38,7 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | `ah rm NAME` | 删除保存的连接记录，不删除远端文件 |
 | `ah connect NAME [COMMAND [ARG...]]` | 交互登录或执行远程命令 |
 | `ah c NAME [COMMAND [ARG...]]` | `connect` 的简写 |
+| `ah forward NAME LOCAL TARGET` | 通过 SSH 转发本地 TCP 端口 |
 | `ah cp SOURCE DESTINATION` | 单个普通文件的本地/远端复制 |
 | `ah history [QUERY...]` | 查询复制历史 |
 | `ah history search [QUERY...]` | 显式的历史查询子命令 |
@@ -57,6 +59,43 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | `remove` | `rm` |
 
 完整命令与简写使用相同参数，均在 `ah --help` 中标注。`ah h` 查询历史，`ah -h` 显示帮助。
+
+## 本地端口转发
+
+```sh
+ah forward A 8080 80 -d
+# 本地 127.0.0.1:8080 → SSH 服务器 A 上的 127.0.0.1:80
+ah forward A 0.0.0.0:8080 80
+# 显式监听本机所有 IPv4 网卡
+ah forward A 15432 database.internal:5432
+ah forward A '[::1]:8080' '[::1]:80'
+ah forward ls
+ah forward kill <ID>
+```
+
+用法为 `ah forward NAME LOCAL TARGET`，两个地址分别传参，不使用 `-L`。
+
+- `NAME`：已保存的 SSH 连接名。
+- 第一个端口 `LOCAL`：**本地监听端口**，例如 `8080` 或 `0.0.0.0:8080`。
+- 第二个参数 `TARGET`：**SSH 服务器侧的目标服务端口**，例如 `80` 表示 SSH 服务器上的 `127.0.0.1:80`；也可指定由该服务器访问的 `HOST:PORT`。
+
+例如 `ah forward A 8080 80 -d` 表示「本地 8080 → SSH 服务器 A 上的 80」。
+这里的 `80` 是目标服务端口，SSH 登录端口仍使用连接配置中的 `port`。
+
+两端只写端口时均默认 `127.0.0.1`；显式地址使用 `HOST:PORT`，IPv6 地址需加方括号。
+目标从 SSH 服务器访问和解析。端口范围为 1–65535，每次命令创建一个 TCP 转发，可同时服务多个连接。
+
+每次启动自动生成 ID。加 `-d` / `--daemon` 后脱离终端运行，SSH 和本地监听准备就绪后才返回 ID；
+不加则在前台运行，Ctrl+C 关闭监听、活动连接及 SSH 连接。后台模式支持 Linux/macOS，使用已保存密码、可用私钥或 SSH agent，不能交互输入密码或私钥口令。
+`ah forward ls` 显示当前用户的所有转发记录，包括 ID、连接名、本地/目标地址、PID、状态和错误；
+`ah forward kill ID` 通过私有控制通道停止对应转发，并等待关闭完成。前台转发也可按 ID 停止。
+停止和失败记录保留；异常中断留下的 running 记录在控制通道不可达时显示 stale，不根据旧 PID 杀进程。
+状态与后台日志位于用户配置目录的 `ah/forwards/<ID>.json` 和 `<ID>.log`，独立于 `--config` 指定的连接文件。
+后台进程不自动重连，也不在系统重启后自动恢复。
+复用连接配置中的 SSH 认证、SOCKS5 代理链及主机密钥校验，支持连接名 Tab 补全。
+转发由 SSH 服务处理，不执行 shell 或 sudo；服务端须允许 TCP 转发。
+监听失败、SSH 断开、目标连接失败或数据传输错误会结束命令并返回非零退出码。
+`--timeout` 同时限制 SSH 建连及每次目标连接建立时间，不限制已建立连接的传输时长。
 
 ## 全局选项
 
