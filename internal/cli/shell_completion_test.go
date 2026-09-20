@@ -155,7 +155,10 @@ func TestShellTabCompletion(t *testing.T) {
 					quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 					init := ""
 					if shell == "zsh" {
-						init = "autoload -Uz compinit; compinit -D; "
+						// -u uses zsh's own function directories without the compaudit
+						// security check: an insecure one makes compinit ask whether to
+						// continue, and a prompted shell never prints AH_READY.
+						init = "autoload -Uz compinit; compinit -D -u; "
 					}
 					write(init + "source " + quote(scriptPath) + "; printf '\\nAH_READY\\n'\n")
 					await("\r\nAH_READY\r\n")
