@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
 )
 
@@ -50,20 +49,7 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(abs), 0700); err != nil {
 		return nil, fmt.Errorf("create history directory: %w", err)
 	}
-	fd, err := unix.Open(abs, unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("open history file: %w", err)
-	}
-	f := os.NewFile(uintptr(fd), abs)
-	info, err := f.Stat()
-	if err == nil && !info.Mode().IsRegular() {
-		err = errors.New("history database must be a regular file")
-	}
-	if err == nil {
-		err = f.Chmod(0600)
-	}
-	err = errors.Join(err, f.Close())
-	if err != nil {
+	if err := prepareFile(abs); err != nil {
 		return nil, fmt.Errorf("prepare history file: %w", err)
 	}
 	uri := url.URL{Scheme: "file", Path: abs}
