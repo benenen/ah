@@ -30,7 +30,7 @@ func (a *app) startForwardDaemon(cmd *cobra.Command, record forward.Record) erro
 		return err
 	}
 	args := []string{"--config", configPath, "--timeout", a.timeout.String()}
-	for _, option := range [][2]string{{"--known-hosts", a.knownHosts}, {"--key-file", a.keyPath}} {
+	for _, option := range [][2]string{{"--known-hosts", record.KnownHosts}, {"--key-file", record.KeyPath}} {
 		if option[1] != "" {
 			args = append(args, option[0], option[1])
 		}
@@ -49,12 +49,13 @@ func (a *app) startForwardDaemon(cmd *cobra.Command, record forward.Record) erro
 	if err != nil {
 		return err
 	}
-	log, err := os.OpenFile(filepath.Join(root, "ah", "forwards", record.ID+".log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	log, err := os.OpenFile(filepath.Join(root, "ah", "forwards", record.ID+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = log.Close() }()
 	child := exec.Command(executable, args...)
+	child.Dir = record.WorkDir
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	child.Stderr = log
 	// Nil stdin/stdout become /dev/null; the daemon cannot prompt or retain

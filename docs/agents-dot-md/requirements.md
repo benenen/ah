@@ -108,10 +108,17 @@ ah h clean --failed --keep-days 7  # 仅删除 7 天前的失败记录
 IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采用 -L 合并参数格式。
 复用命名连接的 SSH 认证、代理链和主机密钥校验；目标由远端访问。转发不执行 shell/sudo。
 
-每次启动生成独立 ID，-d 后台运行（Linux/macOS），无 -d 保留前台和 Ctrl+C。
+每次新建生成独立 ID，-d 后台运行（Linux/macOS），无 -d 保留前台和 Ctrl+C。
 后台只在 SSH 与本地监听准备完成后报告成功，不能交互索取密码；失败向调用方返回非零状态。
 `forward ls` 展示当前用户的前后台记录和运行状态；`forward kill ID` 通过带 ID 校验的私有控制通道取消并等待停止，
 避免旧 PID 被复用时误杀其他进程。停止/失败记录保留，无法联系的 running 记录显示 stale。
 状态和日志保存在用户配置目录 ah/forwards（目录 0700，文件 0600），不随 --config 分组。
 取消、SSH 断开和转发错误必须释放监听、SSH、活动 TCP 和 goroutine；支持双向半关闭。
 目标拨号受 --timeout 限制，已建立连接不受其时长限制；目标连接或数据传输失败结束转发，不自动重连/开机恢复。
+
+`forward start ID` 按原 ID 后台启动 stopped/failed 转发，拒绝重复启动活动转发；
+`forward restart ID` 先等待活动转发停止，再按原 ID 后台启动，stopped/failed 则直接启动。
+保存启动配置/密钥/known_hosts 路径、工作目录和超时，不保存凭据或首次信任授权；重启读取当前连接配置，显式全局选项可覆盖。
+旧记录缺少启动信息时使用当前默认值或显式选项。
+`forward rm ID` 删除 stopped/failed 记录和日志；`forward rm -f ID` 先取消 running/starting 转发，确认停止后删除。
+生命周期操作按 ID 加锁（锁文件保留）；控制通道不可达时保留记录并报错，不通过旧 PID 杀进程。

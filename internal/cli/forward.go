@@ -72,7 +72,31 @@ func (a *app) forwardCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var unlock func() error
+			if worker == "" {
+				lock, lockErr := forward.Lock(cmd.Context(), record.ID)
+				if lockErr != nil {
+					return lockErr
+				}
+				unlock = lock.Unlock
+				defer func() { err = errors.Join(err, lock.Close()) }()
+				// Re-read after acquiring the lifecycle lock.
+				record, err = forward.Read(record.ID)
+				if err != nil {
+					return err
+				}
+				if err = a.captureForwardOptions(&record); err != nil {
+					return err
+				}
+				if err = record.Save(); err != nil {
+					return err
+				}
+			}
+			handedOff := false
 			defer func() {
+				if handedOff {
+					return
+				}
 				if current, readErr := forward.Read(record.ID); err != nil && readErr == nil && current.Status == "starting" {
 					record.Status, record.Error = "failed", err.Error()
 					err = errors.Join(err, record.Save())
@@ -82,10 +106,12 @@ func (a *app) forwardCommand() *cobra.Command {
 				if err = a.startForwardDaemon(cmd, record); err != nil {
 					return err
 				}
+				handedOff = true
 				_, err = fmt.Fprintln(cmd.OutOrStdout(), record.ID)
 				return err
 			}
-			return a.runForward(cmd, record, ready)
+			handedOff = true
+			return a.runForward(cmd, record, ready, unlock)
 		},
 	}
 	cmd.Flags().BoolVarP(&daemon, "daemon", "d", false, "run in the background and print the generated ID")
@@ -112,25 +138,46 @@ func (a *app) forwardCommand() *cobra.Command {
 	}, &cobra.Command{
 		Use: "kill ID", Short: "Stop a forward by ID", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout+5*time.Second)
 			defer cancel()
+			lock, err := forward.Lock(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			defer func() { _ = lock.Close() }()
 			if err := forward.Stop(ctx, args[0]); err != nil {
 				return err
 			}
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "Stopped %s\n", args[0])
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Stopped %s\n", args[0])
 			return err
 		},
 	})
+	cmd.AddCommand(a.forwardRemoveCommand(), a.forwardStartCommand(false), a.forwardStartCommand(true))
 	return cmd
 }
 
-func (a *app) runForward(cmd *cobra.Command, record forward.Record, ready *os.File) (err error) {
+func (a *app) runForward(cmd *cobra.Command, record forward.Record, ready *os.File, unlock func() error) (err error) {
+	var reg *forward.Registration
+	defer func() {
+		if reg == nil && err != nil {
+			record.Status, record.Error = "failed", err.Error()
+			err = errors.Join(err, record.Save())
+		}
+	}()
 	connection, err := a.connection(record.Name)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(cmd.Context())
+	parentCtx := cmd.Context()
+	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
+	cmd.SetContext(ctx)
+	defer cmd.SetContext(parentCtx)
+	reg, err = forward.RegisterStarting(record, cancel)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, reg.Close(err)) }()
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", record.Listen)
 	if err != nil {
 		return fmt.Errorf("listen for forwarding: %w", err)
@@ -142,11 +189,10 @@ func (a *app) runForward(cmd *cobra.Command, record forward.Record, ready *os.Fi
 	}
 	defer func() { _ = client.Close() }()
 	record.Listen = listener.Addr().String()
-	reg, err := forward.Register(record, cancel)
-	if err != nil {
+	reg.Record.Listen = record.Listen
+	if err = reg.Running(); err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, reg.Close(err)) }()
 	if ready != nil {
 		if err = json.NewEncoder(ready).Encode(startupResult{ID: record.ID}); err != nil {
 			return err
@@ -162,8 +208,13 @@ func (a *app) runForward(cmd *cobra.Command, record forward.Record, ready *os.Fi
 			return err
 		}
 	}
+	if unlock != nil {
+		if err = unlock(); err != nil {
+			return err
+		}
+	}
 	err = client.ForwardLocal(ctx, listener, record.Target)
-	if errors.Is(err, context.Canceled) && cmd.Context().Err() == nil {
+	if errors.Is(err, context.Canceled) && parentCtx.Err() == nil {
 		return nil // A control-channel stop is a normal shutdown.
 	}
 	return err

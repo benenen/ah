@@ -2,6 +2,7 @@ package forward
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -68,5 +69,51 @@ func TestControlIdentityAndStaleRecords(t *testing.T) {
 	}
 	if _, err := Read("../not-an-id"); err == nil {
 		t.Fatal("accepted path traversal")
+	}
+}
+
+func TestRemoveAndLifecycleLock(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	r, err := Allocate("test", "127.0.0.1:8080", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := Lock(context.Background(), r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if second, err := Lock(ctx, r.ID); err == nil {
+		_ = second.Close()
+		t.Fatal("concurrent lifecycle command acquired the lock")
+	}
+	for _, status := range []string{"starting", "running", "stale"} {
+		r.Status = status
+		if err := r.Save(); err != nil {
+			t.Fatal(err)
+		}
+		if err := Remove(r.ID); err == nil {
+			t.Fatalf("removed %s record", status)
+		}
+		if _, err := Read(r.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.Status = "failed"
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(r.ID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed record: %v", err)
+	}
+	if _, err := Read("../invalid"); err == nil {
+		t.Fatal("accepted invalid ID")
 	}
 }

@@ -15,18 +15,59 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 type Record struct {
-	ID      string
-	Name    string
-	Listen  string
-	Target  string
-	PID     int
-	Status  string
-	Started time.Time
-	Error   string `json:",omitempty"`
-	Socket  string `json:",omitempty"`
+	ID         string
+	Name       string
+	Listen     string
+	Target     string
+	PID        int
+	Status     string
+	Started    time.Time
+	Error      string        `json:",omitempty"`
+	Socket     string        `json:",omitempty"`
+	ConfigPath string        `json:",omitempty"`
+	KeyPath    string        `json:",omitempty"`
+	KnownHosts string        `json:",omitempty"`
+	WorkDir    string        `json:",omitempty"`
+	Timeout    time.Duration `json:",omitempty"`
+}
+
+// Lock serializes lifecycle commands for an ID. Lock files must remain in place
+// after deletion so that concurrent callers continue to lock the same inode.
+func Lock(ctx context.Context, id string) (*flock.Flock, error) {
+	p, err := recordPath(id)
+	if err != nil {
+		return nil, err
+	}
+	lock := flock.New(p+".lock", flock.SetPermissions(0600))
+	locked, err := lock.TryLockContext(ctx, 20*time.Millisecond)
+	if err != nil {
+		return nil, err
+	}
+	if !locked {
+		return nil, fmt.Errorf("forward %s is busy", id)
+	}
+	return lock, nil
+}
+
+// Remove requires the caller to hold Lock and to have stopped the worker.
+func Remove(id string) error {
+	r, err := Read(id)
+	if err != nil {
+		return err
+	}
+	if r.Status != "stopped" && r.Status != "failed" {
+		return fmt.Errorf("forward %s is %s; stop it or use --force", id, r.Status)
+	}
+	p, _ := recordPath(id)
+	if err := os.Remove(strings.TrimSuffix(p, ".json") + ".log"); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Remove(p)
 }
 
 func directory() (string, error) {
@@ -124,6 +165,20 @@ type Registration struct {
 
 // Register publishes a running tunnel only after its SSH and TCP listeners exist.
 func Register(r Record, cancel context.CancelFunc) (*Registration, error) {
+	return register(r, cancel, "running")
+}
+
+// RegisterStarting exposes cancellation while SSH is still connecting.
+func RegisterStarting(r Record, cancel context.CancelFunc) (*Registration, error) {
+	return register(r, cancel, "starting")
+}
+
+func (r *Registration) Running() error {
+	r.Record.Status = "running"
+	return r.Record.Save()
+}
+
+func register(r Record, cancel context.CancelFunc, status string) (*Registration, error) {
 	socketDir, err := os.MkdirTemp("", "ah-forward-")
 	if err != nil {
 		return nil, err
@@ -134,7 +189,7 @@ func Register(r Record, cancel context.CancelFunc) (*Registration, error) {
 		_ = os.RemoveAll(socketDir)
 		return nil, err
 	}
-	r.Status, r.PID = "running", os.Getpid()
+	r.Status, r.PID = status, os.Getpid()
 	if err = r.Save(); err != nil {
 		_ = listener.Close()
 		_ = os.RemoveAll(socketDir)
@@ -179,7 +234,7 @@ func (r *Registration) Close(runErr error) error {
 }
 
 func control(ctx context.Context, r Record, action string) error {
-	if r.Status != "running" || r.Socket == "" {
+	if (r.Status != "running" && r.Status != "starting") || r.Socket == "" {
 		return fmt.Errorf("forward %s is %s", r.ID, r.Status)
 	}
 	c, err := (&net.Dialer{}).DialContext(ctx, "unix", r.Socket)
@@ -240,6 +295,18 @@ func Stop(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	// Allocation precedes control-socket publication by a short startup window.
+	for r.Status == "starting" && r.Socket == "" {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+		r, err = Read(id)
+		if err != nil {
+			return err
+		}
+	}
 	if err = control(ctx, r, "stop"); err != nil {
 		return fmt.Errorf("stop forward %s: %w", id, err)
 	}
@@ -250,7 +317,7 @@ func Stop(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		if r.Status != "running" {
+		if r.Status != "running" && r.Status != "starting" {
 			return nil
 		}
 		select {
