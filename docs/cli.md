@@ -71,6 +71,7 @@ ah forward A 0.0.0.0:8080 80
 ah forward A 15432 database.internal:5432
 ah forward A '[::1]:8080' '[::1]:80'
 ah forward ls
+ah forward ls --json
 ah forward kill <ID>
 ah forward start <ID>
 ah forward restart <ID>
@@ -93,14 +94,17 @@ ah forward rm -f <ID>
 新建转发时自动生成 ID。加 `-d` / `--daemon` 后脱离终端运行，SSH 和本地监听准备就绪后才返回 ID；
 不加则在前台运行，Ctrl+C 关闭监听、活动连接及 SSH 连接。后台模式支持 Linux/macOS，使用已保存密码、可用私钥或 SSH agent，不能交互输入密码或私钥口令。
 `ah forward ls` 显示当前用户的所有转发记录，包括 ID、连接名、本地/目标地址、PID、状态和错误；
+`ah forward ls --json` 以稳定字段输出同一份列表（`id`、`name`、`listen`、`target`、`pid`、`status`、`started`、`error`），便于脚本消费，内部字段不进输出。
 `ah forward kill ID` 通过私有控制通道停止对应转发，并等待关闭完成。前台转发也可按 ID 停止。
 `ah forward start ID` 按原 ID 在后台启动已停止或失败的转发；对运行中的转发报错。
 `ah forward restart ID` 等待旧转发停止后按原 ID 后台启动，已停止或失败时直接启动。
 启动会恢复记录的配置/密钥/known_hosts 路径、工作目录和超时，使用当前连接配置；显式全局选项可覆盖路径和超时。
 旧版记录未保存这些信息时使用当前默认值或显式选项。首次主机信任授权不会保存供重启复用。
 `ah forward rm ID` 删除已停止或失败的记录及日志；`ah forward rm -f ID` 先停止运行中或启动中的转发再删除。
+记录不可读（JSON 损坏）时普通 `ah forward rm ID` 报错并提示 `--force`，只有 `ah forward rm -f ID` 会删除，且会在 stderr 警告该记录的控制通道不可知、其工作进程可能仍在监听；文件名不是合法 ID 的游离文件不属记录，需手工清理。
 控制通道不可达时不会强删或按 PID 杀进程；无法确认停止时保留记录并报错。生命周期操作按 ID 加锁，删除后保留锁文件。
 停止和失败记录保留；异常中断留下的 running 记录在控制通道不可达时显示 stale，不根据旧 PID 杀进程。
+单个记录文件损坏或文件名不是合法 ID 时，该条显示 corrupt 并附带原因，不影响其余记录的展示；corrupt 记录的控制通道不可知，不能核验也无法停止其工作进程。
 状态与后台日志位于用户配置目录的 `ah/forwards/<ID>.json` 和 `<ID>.log`，独立于 `--config` 指定的连接文件。
 后台进程不自动重连，也不在系统重启后自动恢复。
 复用连接配置中的 SSH 认证、SOCKS5 代理链及主机密钥校验，支持连接名 Tab 补全。

@@ -82,9 +82,11 @@ ah f rm -f ID
 
 先用 `f ls` 核对 ID、连接名和端口：`kill ID` 停止并保留记录；`start ID` 后台启动 stopped/failed 记录，运行中报错；`restart ID` 等待旧转发停止后后台启动，已停止时直接启动。start/restart 保留原 ID，恢复配置/密钥/known_hosts 路径、工作目录和超时，读取当前连接配置；显式全局选项可覆盖路径和超时。旧记录未保存的选项使用当前默认值，首次主机信任授权不随记录复用。
 
-`f rm ID` 删除 stopped/failed 记录及日志；`f rm -f ID` 先停止 running/starting 转发再删除。仅在用户授权停止该转发时使用 `-f`。控制通道不可达时命令报错并保留记录，不按旧 PID 杀进程；`stale` 不能当作已确认停止。顶层 `ah rm NAME` 删除的是连接配置，注意命令层级。
+`f rm ID` 删除 stopped/failed 记录及日志；`f rm -f ID` 先停止 running/starting 转发再删除。仅在用户授权停止该转发时使用 `-f`。控制通道不可达时命令报错并保留记录，不按旧 PID 杀进程；`stale` 不能当作已确认停止。记录不可读时只有 `-f` 能删，且会警告其工作进程可能仍在监听；应先查清是否有残留监听再删。顶层 `ah rm NAME` 删除的是连接配置，注意命令层级。
 
 记录与日志位于用户配置目录 `ah/forwards/`，不随 `--config` 分组。确认启动成功还需核对 `f ls` 状态；报告 ID 和实际监听地址。SSH 断开或目标连接失败会结束转发，没有自动重连或开机恢复。
+
+脚本里解析状态用 `f ls --json`，字段为 `id`、`name`、`listen`、`target`、`pid`、`status`、`started`、`error`；空列表输出 `[]`。单条记录损坏时该条 `status` 为 `corrupt` 并在 `error` 里给出原因，其余记录照常列出；`corrupt` 记录无法通过 CLI 核验或停止，别把它当成已停止。
 
 ### 文件复制与历史
 

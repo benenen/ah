@@ -1,7 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/benenen/ah/internal/forward"
 )
 
 func TestParseLocalForward(t *testing.T) {
@@ -41,5 +48,100 @@ func TestForwardArguments(t *testing.T) {
 		if _, err := execute(t, args...); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
+	}
+}
+
+func TestForwardListJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	out, err := execute(t, "forward", "ls", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "[]" {
+		t.Fatalf("empty listing must stay valid JSON: %q", out)
+	}
+	if _, err := forward.Allocate("dev", "127.0.0.1:8080", "127.0.0.1:80"); err != nil {
+		t.Fatal(err)
+	}
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Documented layout: <user config dir>/ah/forwards/<ID>.json.
+	corrupt := filepath.Join(configDir, "ah", "forwards", "0123456789abcdef.json")
+	if err := os.WriteFile(corrupt, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err = execute(t, "forward", "ls", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []struct {
+		ID      string    `json:"id"`
+		Name    string    `json:"name"`
+		Listen  string    `json:"listen"`
+		Target  string    `json:"target"`
+		PID     int       `json:"pid"`
+		Status  string    `json:"status"`
+		Started time.Time `json:"started"`
+		Error   string    `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		t.Fatalf("invalid JSON %q: %v", out, err)
+	}
+	status := make(map[string]string, len(listed))
+	for _, r := range listed {
+		status[r.ID] = r.Status
+	}
+	if len(listed) != 2 || status["0123456789abcdef"] != "corrupt" {
+		t.Fatalf("unexpected records: %v", listed)
+	}
+	if listed[1].Name != "dev" || listed[1].Status != "starting" || listed[1].Listen != "127.0.0.1:8080" {
+		t.Fatalf("readable record: %v", listed[1])
+	}
+	if strings.Contains(out, "socket") || strings.Contains(out, "key_path") {
+		t.Fatalf("internal fields leaked into JSON: %q", out)
+	}
+	table, err := execute(t, "forward", "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table, "STATUS") || !strings.Contains(table, "corrupt") {
+		t.Fatalf("table view lost the corrupt record: %q", table)
+	}
+}
+
+func TestForwardRemoveCorruptRecord(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupt := filepath.Join(configDir, "ah", "forwards", "0123456789abcdef.json")
+	if err := os.MkdirAll(filepath.Dir(corrupt), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(corrupt, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, "forward", "rm", "0123456789abcdef"); err == nil {
+		t.Fatal("plain rm deleted an unreadable record")
+	}
+	if _, err := os.Stat(corrupt); err != nil {
+		t.Fatalf("record removed without --force: %v", err)
+	}
+	out, err := execute(t, "forward", "rm", "-f", "0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Warning") || !strings.Contains(out, "Removed 0123456789abcdef") {
+		t.Fatalf("output: %q", out)
+	}
+	if _, err := os.Stat(corrupt); !os.IsNotExist(err) {
+		t.Fatalf("record survived --force: %v", err)
 	}
 }

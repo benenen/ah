@@ -64,6 +64,26 @@ func Remove(id string) error {
 		return fmt.Errorf("forward %s is %s; stop it or use --force", id, r.Status)
 	}
 	p, _ := recordPath(id)
+	return removeFiles(p)
+}
+
+// RemoveCorrupt deletes a record file that cannot be decoded, together with its
+// log, and leaves the lock file in place like Remove does. The record's control
+// socket is unreadable, so a worker started from it can be neither verified nor
+// stopped: callers must warn that its listener may survive. Readable records are
+// rejected so this cannot bypass the status check in Remove.
+func RemoveCorrupt(id string) error {
+	p, err := recordPath(id)
+	if err != nil {
+		return err
+	}
+	if _, err := Read(id); err == nil {
+		return fmt.Errorf("forward %s is readable", id)
+	}
+	return removeFiles(p)
+}
+
+func removeFiles(p string) error {
 	if err := os.Remove(strings.TrimSuffix(p, ".json") + ".log"); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -260,6 +280,9 @@ func control(ctx context.Context, r Record, action string) error {
 	return nil
 }
 
+// List returns every record ordered by start time. A record file that cannot be
+// read is reported with status "corrupt" instead of failing the whole listing;
+// its control socket is unknown, so its worker can be neither verified nor stopped.
 func List(ctx context.Context) ([]Record, error) {
 	dir, err := directory()
 	if err != nil {
@@ -277,9 +300,11 @@ func List(ctx context.Context) ([]Record, error) {
 		if !strings.HasSuffix(f.Name(), ".json") {
 			continue
 		}
-		r, err := Read(strings.TrimSuffix(f.Name(), ".json"))
+		id := strings.TrimSuffix(f.Name(), ".json")
+		r, err := Read(id)
 		if err != nil {
-			return nil, fmt.Errorf("read forward %s: %w", f.Name(), err)
+			records = append(records, Record{ID: id, Status: "corrupt", Error: err.Error()})
+			continue
 		}
 		if r.Status == "running" && control(ctx, r, "ping") != nil {
 			r.Status = "stale"

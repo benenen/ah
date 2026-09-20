@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -117,12 +118,16 @@ func (a *app) forwardCommand() *cobra.Command {
 	cmd.Flags().BoolVarP(&daemon, "daemon", "d", false, "run in the background and print the generated ID")
 	cmd.Flags().StringVar(&worker, "forward-worker", "", "internal worker ID")
 	_ = cmd.Flags().MarkHidden("forward-worker")
-	cmd.AddCommand(&cobra.Command{
+	var jsonOutput bool
+	ls := &cobra.Command{
 		Use: "ls", Short: "List forwards and their status", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			records, err := forward.List(cmd.Context())
 			if err != nil {
 				return err
+			}
+			if jsonOutput {
+				return writeForwardJSON(cmd.OutOrStdout(), records)
 			}
 			out := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 			if _, err := fmt.Fprintln(out, "ID\tNAME\tLOCAL\tTARGET\tPID\tSTATUS\tERROR"); err != nil {
@@ -135,7 +140,9 @@ func (a *app) forwardCommand() *cobra.Command {
 			}
 			return out.Flush()
 		},
-	}, &cobra.Command{
+	}
+	ls.Flags().BoolVar(&jsonOutput, "json", false, "print records as JSON")
+	cmd.AddCommand(ls, &cobra.Command{
 		Use: "kill ID", Short: "Stop a forward by ID", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout+5*time.Second)
@@ -243,4 +250,31 @@ func parseLocalForward(local, target string) (string, string, error) {
 		}
 	}
 	return local, target, nil
+}
+
+// forwardJSON is the stable shape of `ah forward ls --json`. Internal record
+// fields such as the transient control socket stay out of the CLI contract.
+type forwardJSON struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Listen  string    `json:"listen"`
+	Target  string    `json:"target"`
+	PID     int       `json:"pid"`
+	Status  string    `json:"status"`
+	Started time.Time `json:"started"`
+	Error   string    `json:"error,omitempty"`
+}
+
+func writeForwardJSON(w io.Writer, records []forward.Record) error {
+	out := make([]forwardJSON, 0, len(records))
+	for _, r := range records {
+		out = append(out, forwardJSON{
+			ID: r.ID, Name: r.Name, Listen: r.Listen, Target: r.Target,
+			PID: r.PID, Status: r.Status, Started: r.Started, Error: r.Error,
+		})
+	}
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(out)
 }

@@ -69,6 +69,18 @@ func (a *app) forwardRemoveCommand() *cobra.Command {
 			defer func() { err = errors.Join(err, lock.Close()) }()
 			r, err := forward.Read(args[0])
 			if err != nil {
+				if !force {
+					return fmt.Errorf("read forward %s: %w (use --force to delete an unreadable record)", args[0], err)
+				}
+				// The unreadable record hides its control socket, so a worker started
+				// from it cannot be confirmed stopped; deleting may leave it listening.
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: forward %s is unreadable (%v); a worker started from it cannot be stopped and may keep listening\n", args[0], err); err != nil {
+					return err
+				}
+				if err := forward.RemoveCorrupt(args[0]); err != nil {
+					return err
+				}
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s\n", args[0])
 				return err
 			}
 			if force && (r.Status == "running" || r.Status == "starting") {

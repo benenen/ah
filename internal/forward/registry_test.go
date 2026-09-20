@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -115,5 +117,96 @@ func TestRemoveAndLifecycleLock(t *testing.T) {
 	}
 	if _, err := Read("../invalid"); err == nil {
 		t.Fatal("accepted invalid ID")
+	}
+}
+
+func TestListReportsCorruptRecords(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	good, err := Allocate("test", "127.0.0.1:8080", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := directory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A truncated record, and a stray file whose name is not a forward ID.
+	for name, body := range map[string]string{
+		"0123456789abcdef.json": "{",
+		"notes.json":            "not json",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	records, err := List(context.Background())
+	if err != nil {
+		t.Fatalf("a single unreadable record must not fail the listing: %v", err)
+	}
+	status := make(map[string]string, len(records))
+	for _, r := range records {
+		status[r.ID] = r.Status
+		if r.Status == "corrupt" && r.Error == "" {
+			t.Fatalf("corrupt record without a reason: %v", r)
+		}
+	}
+	if len(records) != 3 {
+		t.Fatalf("expected 3 records, got %d: %v", len(records), records)
+	}
+	if status[good.ID] != "starting" {
+		t.Fatalf("readable record status: %v", status)
+	}
+	for _, id := range []string{"0123456789abcdef", "notes"} {
+		if status[id] != "corrupt" {
+			t.Fatalf("record %s: status %q, want corrupt", id, status[id])
+		}
+	}
+}
+
+func TestRemoveCorrupt(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	r, err := Allocate("test", "127.0.0.1:8080", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Readable records must keep going through Remove so its status check applies.
+	if err := RemoveCorrupt(r.ID); err == nil {
+		t.Fatal("RemoveCorrupt deleted a readable record")
+	}
+	p, err := recordPath(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := strings.TrimSuffix(p, ".json") + ".log"
+	// The CLI holds the lifecycle lock while it removes a record.
+	lock, err := Lock(context.Background(), r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := os.WriteFile(p, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(log, []byte("log"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveCorrupt(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{p, log} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s survived: %v", path, err)
+		}
+	}
+	// Concurrent lifecycles must keep locking the same inode.
+	if _, err := os.Stat(p + ".lock"); err != nil {
+		t.Fatalf("lock file removed: %v", err)
+	}
+	if err := RemoveCorrupt("../not-an-id"); err == nil {
+		t.Fatal("accepted path traversal")
 	}
 }
