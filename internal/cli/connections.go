@@ -15,12 +15,16 @@ func (a *app) listCommand() *cobra.Command {
 			return err
 		}
 		out := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		if _, err = fmt.Fprintln(out, "NAME\tHOST\tPORT\tUSER"); err != nil {
+		if _, err = fmt.Fprintln(out, "NAME\tHOST\tPORT\tUSER\tTERM"); err != nil {
 			return err
 		}
 		for _, name := range sortedNames(entries) {
 			c := entries[name]
-			if _, err = fmt.Fprintf(out, "%s\t%s\t%d\t%s\n", name, c.Host, c.Port, c.User); err != nil {
+			term := c.Term
+			if term == "" {
+				term = "-"
+			}
+			if _, err = fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\n", name, c.Host, c.Port, c.User, term); err != nil {
 				return err
 			}
 		}

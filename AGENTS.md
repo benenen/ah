@@ -33,7 +33,7 @@ ah 使用 Go 对 SSH client 做一层封装，提供 CLI 管理连接；连接�
 
 ## 项目技能索引
 <!-- SKILLS:START -->
-- **ah-cli** — 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件、查询重跑复制历史、配置 SOCKS5 多跳和 sudo （`skills/ah-cli`）
+- **ah-cli** — 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件、查询重跑复制历史、管理 SSH 本地端口转发、配置 SOCKS5 多跳和 sudo （`skills/ah-cli`）
 <!-- SKILLS:END -->
 
 ## 模块文档索引

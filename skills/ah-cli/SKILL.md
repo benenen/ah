@@ -1,11 +1,11 @@
 ---
 name: ah-cli
-description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件、查询重跑复制历史、配置 SOCKS5 多跳和 sudo。当用户提到 ah、bin/ah，或明确要求通过 ah 连接服务器、传文件、配置认证/代理/提权时使用。
+description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件、查询重跑复制历史、管理 SSH 本地端口转发、配置 SOCKS5 多跳和 sudo。当用户提到 ah、bin/ah，或要求通过 ah 连接服务器、传文件、管理转发、配置认证/代理/提权时使用。
 ---
 
 # 使用 ah CLI
 
-命令与简写：`connect/c`、`copy/cp`、`edit/e`、`history/h`、`list/ls`、`new/n`、`remove/rm`。参数完全一致；`h` 是历史命令，`-h` 是帮助选项。
+命令与简写：`connect/c`、`copy/cp`、`edit/e`、`forward/f`、`history/h`、`list/ls`、`new/n`、`remove/rm`。参数完全一致；`h` 是历史命令，`-h` 是帮助选项。
 
 ## 先确定二进制和操作对象
 
@@ -23,6 +23,8 @@ description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制
 | 查看、新建、编辑、删除连接 | `list`、`new NAME --host HOST --user USER`、`edit NAME`、`rm NAME` |
 | 执行一次远程命令 | `c NAME COMMAND...`（等价 `connect`） |
 | 人工交互登录 | `c NAME`，需要可交互终端 |
+| 创建本地端口转发 | `f NAME LOCAL TARGET -d` |
+| 管理已有转发 | `f ls`、`f kill ID`、`f start ID`、`f restart ID`、`f rm ID` |
 | 上传/下载/远端互传 | `cp SOURCE DESTINATION` |
 | 查找并复用复制操作 | `history search WORDS...` → `history show ID` → `history run ID` |
 | 持久化代理链 | `edit NAME --proxy ADDRESS --proxy ADDRESS` |
@@ -37,6 +39,8 @@ ah --timeout 20s c nas uname -a
 ah c nas "cat '/home/alice/a file.txt'"
 ah c nas 'cd /home/alice && ls -lah | head -20'
 ```
+
+`ah ls` / `ah list` 显示 NAME、HOST、PORT、USER、TERM。TERM 是连接保存的配置值；`-` 表示未配置，连接时沿用本地 `$TERM`（显式全局 `--term` 仍可覆盖），不是远端探测结果。
 
 自动执行任务时优先使用带命令的 `c`，避免停留在登录 shell。将 ah 自身选项放在连接名之前；之后所有参数（包括 `--help`）属于远端。
 
@@ -57,7 +61,30 @@ ah edit nas --sudo=false
 
 sudo 复制需要独立 `sftp-server` 和相应 sudo 权限，可用 `edit NAME --sftp-server /absolute/path` 指定。它提升远端权限；本地端仍为当前用户。使用绝对 `/root/...` 表达 root 目录，不假定 SFTP 的 `~` 是 root 的 home。仅在任务授权范围内启用提权，不修改服务器 sudoers 来绕过失败。
 
-按最终 SSH 主机校验 known_hosts。首次连接的交互终端会打印目标地址和 SSH 指纹并等待 yes/no，先核对指纹再回答；无交互终端（含补全）不会提示，必须显式加 `--trust-new-host` 才能接受未知主机。主机密钥变化时核查，不盲删记录。主密钥与 TOML 分开保管，缺失密钥或密文无法解密时修复正确配置/备份，不生成替代密钥冒充恢复成功。
+按最终 SSH 主机校验 known_hosts。首次连接的交互终端会打印目标地址和 SSH 指纹并等待 yes/no，先核对指纹再回答；无交互终端（含补全）不会提示，必须显式加 `--trust-new-host` 才能接受未知主机。显式首次信任仍需已有授权并核对可信指纹；等待交互确认的时间不计入 `--timeout`。主机密钥变化时核查，不盲删记录。主密钥与 TOML 分开保管，缺失密钥或密文无法解密时修复正确配置/备份，不生成替代密钥冒充恢复成功。
+
+### 本地端口转发
+
+```sh
+ah f nas 8080 80 -d
+ah f nas 15432 database.internal:5432 -d
+ah f ls
+ah f kill ID
+ah f start ID
+ah f restart ID
+ah f rm ID
+ah f rm -f ID
+```
+
+`forward/f NAME LOCAL TARGET` 的 LOCAL 是本地监听地址，TARGET 是 SSH 服务器侧访问的目标地址；只写端口时两端均默认 `127.0.0.1`。目标端口不是 SSH 登录端口。显式填写 `0.0.0.0:8080` 才监听所有 IPv4 网卡；IPv6 使用 `[::1]:8080`。复用连接的认证、代理和主机密钥校验，转发不执行 shell 或 sudo。
+
+自动化启动优先用 `-d`，等 SSH 和本地监听就绪后返回新 ID；不加则前台运行，Ctrl+C 停止。后台不能提示密码或确认主机指纹，先准备好非交互认证和主机信任。
+
+先用 `f ls` 核对 ID、连接名和端口：`kill ID` 停止并保留记录；`start ID` 后台启动 stopped/failed 记录，运行中报错；`restart ID` 等待旧转发停止后后台启动，已停止时直接启动。start/restart 保留原 ID，恢复配置/密钥/known_hosts 路径、工作目录和超时，读取当前连接配置；显式全局选项可覆盖路径和超时。旧记录未保存的选项使用当前默认值，首次主机信任授权不随记录复用。
+
+`f rm ID` 删除 stopped/failed 记录及日志；`f rm -f ID` 先停止 running/starting 转发再删除。仅在用户授权停止该转发时使用 `-f`。控制通道不可达时命令报错并保留记录，不按旧 PID 杀进程；`stale` 不能当作已确认停止。顶层 `ah rm NAME` 删除的是连接配置，注意命令层级。
+
+记录与日志位于用户配置目录 `ah/forwards/`，不随 `--config` 分组。确认启动成功还需核对 `f ls` 状态；报告 ID 和实际监听地址。SSH 断开或目标连接失败会结束转发，没有自动重连或开机恢复。
 
 ### 文件复制与历史
 
@@ -87,6 +114,8 @@ ah edit nas --clear-proxy
 ```
 
 重复 `--proxy` 按“本机 → 第一跳 → 第二跳 → 目标”保存，edit 替换整条链而非追加。支持 SOCKS5（也接受 HOST:PORT、socks5h://），不能用 SSH 跳板名称代替。旧 proxy 字段仍可读取，重复 --proxy 改存 proxies 数组。认证 URL 可用，但其中凭据原样保存，不属于密码加密功能，避免写入日志或共享文件。后续域名由上一跳解析，失败不回退直连。
+
+代理连接超时时，先区分本地代理连接、SOCKS5 CONNECT 和 SSH 握手阶段。代理端口监听正常不代表 VPN 隧道已建立；可用同代理下的已知主机作对照，检查 VPN 登录状态、隧道接口和目标路由，再决定是否需要在授权范围内重连。尚未建立 TCP 连接时不归因为 SSH 密码错误，也不靠关闭主机校验解决。
 
 需要人工 Tab 时，Bash 加载 `source <(ah completion bash)`；Zsh 先 `autoload -Uz compinit && compinit` 再加载对应脚本；Fish 使用 `ah completion fish | source`。本地/远端路径均支持补全；远端查询最长约 3 秒，不会弹出信任或密码提示。空候选先检查信任、目录和非交互认证条件，不通过关闭校验解决。
 
