@@ -37,9 +37,16 @@ func TestTerminalModesReportLocalTerminal(t *testing.T) {
 	if _, ok := modes[ssh.CS7]; ok || modes[ssh.CS8] != 1 {
 		t.Fatal("unexpected character size modes", modes[ssh.CS7], modes[ssh.CS8])
 	}
-	// pty-req carries baud rates, not speed_t encodings; a pty defaults to 38400.
-	if modes[ssh.TTY_OP_ISPEED] != 38400 || modes[ssh.TTY_OP_OSPEED] != 38400 {
-		t.Fatal("unexpected terminal speed", modes[ssh.TTY_OP_ISPEED], modes[ssh.TTY_OP_OSPEED])
+	// pty-req carries baud rates, not speed_t encodings, and the kernel default
+	// differs per platform (9600 on macOS, 38400 on Linux), so request a rate that
+	// is neither and check it is forwarded as-is.
+	const baud = 115200
+	if err := setTermiosSpeed(fd, state, baud); err != nil {
+		t.Fatal(err)
+	}
+	modes = terminalModes(fd)
+	if modes[ssh.TTY_OP_ISPEED] != baud || modes[ssh.TTY_OP_OSPEED] != baud {
+		t.Fatalf("terminal speed %d/%d, want %d", modes[ssh.TTY_OP_ISPEED], modes[ssh.TTY_OP_OSPEED], baud)
 	}
 	raw, err := term.MakeRaw(fd)
 	if err != nil {
