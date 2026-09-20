@@ -23,8 +23,9 @@
 | `ah connect <name> [COMMAND [ARG...]]` / `ah c <name> [COMMAND [ARG...]]` | 无命令时交互登录；带命令时执行远程命令并退出，两者等价并支持连接名补全 |
 | `ah cp A:/source/file B:/target/file` | 从 A 经 SFTP 读取，并经 SFTP 写入 B |
 | `ah completion <shell>` | 输出 shell 补全脚本，首批覆盖 Bash、Zsh、Fish |
+| `ah version` / `ah v` | 输出版本、commit、构建时间与运行平台；版本由构建时注入，源码构建显示 dev |
 
-`connect`、`completion` 是配套命令约定。目录递归复制、SSH 跳板机、断点续传暂不列入已确定范围。遇到已有目标文件时默认报错；显式覆盖选项为 `--force` / `-f`。
+`connect`、`completion`、`version` 是配套命令约定。目录递归复制、SSH 跳板机、断点续传暂不列入已确定范围。遇到已有目标文件时默认报错；显式覆盖选项为 `--force` / `-f`。
 
 ## 配置
 
@@ -91,7 +92,7 @@ SSH 统一拨号路径用于 connect/c/cp/远程补全；第一跳本机解析�
 
 兼容旧 proxy 字符串（与 proxies 互斥）、socks5h URL、代理 URL 认证和 --no-sudo。代理 URL 认证信息原样存储，不属于加密密码。旧 sudo 密文按旧连接名绑定解密，新密码使用独立 sudo 绑定；不再隐式复用 SSH 密码。
 
-命令统一支持 connect/c、copy/cp、edit/e、history/h、list/ls、new/n、remove/rm；顶层 help 显示简写，子命令帮助显示别名。-h 仍为帮助标志。
+命令统一支持 connect/c、copy/cp、edit/e、history/h、list/ls、new/n、remove/rm、version/v；顶层 help 显示简写，子命令帮助显示别名。-h 仍为帮助标志。
 
 history run ID 支持 --force/-f 和 --force=false 显式覆盖原 force；未指定则继承原值，新历史记录保存最终生效值。
 

@@ -20,7 +20,7 @@
 
 ## 准备与命令总览
 
-源码构建需要 Go 1.26+。SSH 终端及远程命令支持 macOS/Linux。
+源码构建需要 Go 1.26+，也可以直接使用 [Releases](https://github.com/benenen/ah/releases) 中对应平台的压缩包。SSH 终端及远程命令支持 macOS/Linux。
 
 ```sh
 make build                 # 生成 ./bin/ah
@@ -45,6 +45,7 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | `ah history show ID` | 输出可复用的 shell 命令 |
 | `ah history run ID` | 重跑该次复制，追加新记录 |
 | `ah completion bash` / `zsh` / `fish` | 输出对应 shell 的补全脚本 |
+| `ah version` | 输出版本、commit、构建时间与运行平台 |
 
 ## 命令简写
 
@@ -58,8 +59,9 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | `list` | `ls` |
 | `new` | `n` |
 | `remove` | `rm` |
+| `version` | `v` |
 
-完整命令与简写使用相同参数，均在 `ah --help` 中标注。`ah h` 查询历史，`ah -h` 显示帮助。
+完整命令与简写使用相同参数，均在 `ah --help` 中标注。`ah h` 查询历史，`ah v` 输出版本，`ah -h` 显示帮助。
 
 ## 本地端口转发
 

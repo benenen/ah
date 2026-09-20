@@ -5,12 +5,12 @@ description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制
 
 # 使用 ah CLI
 
-命令与简写：`connect/c`、`copy/cp`、`edit/e`、`forward/f`、`history/h`、`list/ls`、`new/n`、`remove/rm`。参数完全一致；`h` 是历史命令，`-h` 是帮助选项。
+命令与简写：`connect/c`、`copy/cp`、`edit/e`、`forward/f`、`history/h`、`list/ls`、`new/n`、`remove/rm`、`version/v`。参数完全一致；`h` 是历史命令，`v` 输出版本与构建信息，`-h` 是帮助选项。
 
 ## 先确定二进制和操作对象
 
 1. 使用用户指定的 ah 路径。在 ah 仓库内优先用 `./bin/ah`；缺少构建产物时运行 `make build`。仓库外用 `command -v ah` 定位已安装程序，不要假设当前目录有 Makefile。
-2. 运行该二进制的 `--help`，按任务查子命令帮助。下文用 `ah` 简写，执行时换成确定的二进制路径。不支持的选项先核对版本/构建，不自行发明兼容参数。
+2. 运行该二进制的 `--help`，按任务查子命令帮助。下文用 `ah` 简写，执行时换成确定的二进制路径。不支持的选项先核对版本/构建（`ah version`），不自行发明兼容参数。
 3. 延续用户已指定的 `--config`、`--known-hosts`、`--key-file`、`--history-file`。用 `list` 核对连接名；只在目标或权限确实不明确时补问。用户已授权的工作直接执行。
 4. 若在源码仓库需要完整选项或故障表，读取 `docs/cli.md` 对应章节；独立安装此 skill 时可直接用 CLI 帮助和下列流程。
 

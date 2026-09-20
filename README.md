@@ -16,8 +16,9 @@ Go 编写的 SSH 连接管理 CLI。使用 TOML 保存命名连接，支持 SSH 
 | `list` | `ls` |
 | `new` | `n` |
 | `remove` | `rm` |
+| `version` | `v` |
 
-完整命令与简写使用相同参数，均在 `ah --help` 中标注。`ah h` 查询历史，`ah -h` 显示帮助。
+完整命令与简写使用相同参数，均在 `ah --help` 中标注。`ah h` 查询历史，`ah v` 输出版本，`ah -h` 显示帮助。
 
 ## 安装
 
@@ -28,6 +29,14 @@ make build
 # 或安装到 $(go env GOPATH)/bin：
 make install
 ```
+
+也可以从 [Releases](https://github.com/benenen/ah/releases) 下载对应平台的压缩包（`ah_<版本>_<系统>_<架构>.tar.gz`，Windows 为 `.zip`），解压后把 `ah` 加入 PATH：
+
+```sh
+tar -xzf ah_0.1.0_linux_amd64.tar.gz
+```
+
+压缩包内含 `LICENSE`，`checksums.txt` 列出全部产物的 SHA-256。Windows 产物可完成 `list`、`cp`、`history`、`version` 等操作；`connect`（交互登录与远程命令）、密码输入、主机信任确认和后台转发会返回明确的不支持错误。`ah version` 输出版本、commit、构建时间与运行平台，报告问题时可以附上。
 
 后续示例假设 `ah` 已加入 PATH。
 

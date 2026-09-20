@@ -11,7 +11,7 @@ func TestCommandAliasesAndHelp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, alias := range map[string]string{"connect": "c", "copy": "cp", "edit": "e", "forward": "f", "history": "h", "list": "ls", "new": "n", "remove": "rm"} {
+	for name, alias := range map[string]string{"connect": "c", "copy": "cp", "edit": "e", "forward": "f", "history": "h", "list": "ls", "new": "n", "remove": "rm", "version": "v"} {
 		full, _, err := root.Find([]string{name})
 		if err != nil {
 			t.Fatal(err)
