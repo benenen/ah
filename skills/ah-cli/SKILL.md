@@ -57,7 +57,7 @@ ah edit nas --sudo=false
 
 sudo 复制需要独立 `sftp-server` 和相应 sudo 权限，可用 `edit NAME --sftp-server /absolute/path` 指定。它提升远端权限；本地端仍为当前用户。使用绝对 `/root/...` 表达 root 目录，不假定 SFTP 的 `~` 是 root 的 home。仅在任务授权范围内启用提权，不修改服务器 sudoers 来绕过失败。
 
-按最终 SSH 主机校验 known_hosts。仅在已有首次信任授权并核对可信指纹后使用 `--trust-new-host`；主机密钥变化时核查，不盲删记录。主密钥与 TOML 分开保管，缺失密钥或密文无法解密时修复正确配置/备份，不生成替代密钥冒充恢复成功。
+按最终 SSH 主机校验 known_hosts。首次连接的交互终端会打印目标地址和 SSH 指纹并等待 yes/no，先核对指纹再回答；无交互终端（含补全）不会提示，必须显式加 `--trust-new-host` 才能接受未知主机。主机密钥变化时核查，不盲删记录。主密钥与 TOML 分开保管，缺失密钥或密文无法解密时修复正确配置/备份，不生成替代密钥冒充恢复成功。
 
 ### 文件复制与历史
 

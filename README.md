@@ -147,14 +147,17 @@ user = "bob"
 - `new/edit --password` 隐藏输入 SSH 密码，以 AES-256-GCM 加密后写入 TOML 的 `password` 字段（`enc:v1:` 格式）；保存的密码用于 `connect/c/cp` 和远程补全，并优先于密钥认证。普通连接时临时输入的密码和私钥口令不会保存。
 - 加密主密钥独立保存在 `os.UserConfigDir()/ah/master.key`，可用 `--key-file` 指定。首次保存密码时随机生成，文件权限为 0600；解密时缺失密钥会报错，不会重新生成。备份和迁移时需要同时保管 TOML 与对应密钥，丢失密钥后须重新设置密码。拿到两者的人可以解密，因此密钥应单独妥善保管。
 - 默认校验 `~/.ssh/known_hosts`；`--known-hosts /path/known_hosts` 可覆盖。
-- 未知主机默认拒绝。先按自己的可信渠道核验主机指纹，再显式使用 `--trust-new-host` 接受并记录首次见到的密钥；已有主机密钥发生变化时仍拒绝。该选项不使补全操作写入信任记录。
+- 未知主机在交互终端先按可信渠道核对指纹，回答 yes 才接受并记录首次见到的密钥；回答 no，或没有交互终端的调用（含补全），一律拒绝。已有主机密钥发生变化时始终拒绝，不提示、不覆盖。
+- `--trust-new-host` 跳过提示，直接接受并保存首次见到的密钥。该选项不使补全操作写入信任记录。
 
 ```sh
+# 首次连接提示核对指纹，回答 yes 后写入 known_hosts
+ah connect A
 ah --trust-new-host connect A
 ah --known-hosts ./test-known-hosts --timeout 15s connect A
 ```
 
-`--timeout` 默认 10 秒，约束认证、连接与握手阶段；不会给整次文件传输设置总时长上限。Ctrl-C 可取消复制或密码输入；交互 SSH 中 Ctrl-C 发送给远端终端。
+`--timeout` 默认 10 秒，约束认证、连接与握手阶段；等待回答主机密钥提示的时间不计入其中，也不会给整次文件传输设置总时长上限。Ctrl-C 可取消复制或密码输入；交互 SSH 中 Ctrl-C 发送给远端终端。
 
 ## SOCKS5 多跳
 

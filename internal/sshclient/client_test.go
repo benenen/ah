@@ -91,6 +91,25 @@ func TestUnknownAndChangedKeys(t *testing.T) {
 		t.Fatal("changed key prompted for trust")
 	}
 }
+
+// Answering an unknown host key prompt pauses the handshake clock, so a slow
+// decision must not consume --timeout.
+func TestTrustDecisionOutlivesHandshakeTimeout(t *testing.T) {
+	f := testutil.StartSSH(t)
+	missing := filepath.Join(t.TempDir(), "known_hosts")
+	c, err := sshclient.Dial(context.Background(), f.Connection, sshclient.Options{KnownHosts: missing, Timeout: 150 * time.Millisecond, TrustHost: func(string, string) (bool, error) {
+		time.Sleep(500 * time.Millisecond)
+		return true, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	if _, err = os.Stat(missing); err != nil {
+		t.Fatal("trusted key was not saved", err)
+	}
+}
+
 func TestAuthenticationFailure(t *testing.T) {
 	f := testutil.StartSSH(t)
 	other := testutil.StartSSH(t)

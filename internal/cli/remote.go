@@ -14,7 +14,9 @@ import (
 
 func (a *app) sshOptions(cmd *cobra.Command) sshclient.Options {
 	opts := sshclient.Options{KnownHosts: a.knownHosts, Timeout: a.timeout, Term: a.term}
-	if input, ok := cmd.InOrStdin().(*os.File); ok && term.IsTerminal(int(input.Fd())) {
+	input, ok := cmd.InOrStdin().(*os.File)
+	terminal := ok && term.IsTerminal(int(input.Fd()))
+	if terminal {
 		read := func(prompt string) ([]byte, error) {
 			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout)
 			defer cancel()
@@ -23,10 +25,17 @@ func (a *app) sshOptions(cmd *cobra.Command) sshclient.Options {
 		opts.Password = func() (string, error) { b, err := read("SSH password: "); defer clear(b); return string(b), err }
 		opts.Passphrase = func(p string) ([]byte, error) { return read(fmt.Sprintf("Passphrase for %s: ", p)) }
 	}
-	if a.trustNewHost {
+	switch {
+	case a.trustNewHost:
 		opts.TrustHost = func(host, fingerprint string) (bool, error) {
 			_, err := fmt.Fprintf(cmd.ErrOrStderr(), "Trusting new host %s: %s\n", host, fingerprint)
 			return err == nil, err
+		}
+	case terminal:
+		// Without --trust-new-host an unknown key is confirmed interactively, like
+		// OpenSSH. Noninteractive callers keep failing closed.
+		opts.TrustHost = func(host, fingerprint string) (bool, error) {
+			return confirmHost(cmd.Context(), input, cmd.ErrOrStderr(), host, fingerprint)
 		}
 	}
 	return opts

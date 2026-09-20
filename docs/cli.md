@@ -117,7 +117,7 @@ ah forward rm -f <ID>
 | `--history-file PATH` | `os.UserConfigDir()/ah/history.db` |
 | `--known-hosts PATH` | `~/.ssh/known_hosts` |
 | `--timeout DURATION` | `10s`；正数，约束 SSH/代理链握手及 sudo 初始化，不限制整个文件传输时长 |
-| `--trust-new-host` | 显式接受并保存首次见到的主机密钥；已知密钥变化仍报错 |
+| `--trust-new-host` | 不提示直接接受并保存首次见到的主机密钥；已知密钥变化仍报错 |
 | `--help` / `-h` | 显示帮助 |
 
 建议将全局选项放在子命令前；对于 `connect/c`，必须放在连接名之前。连接名后的一切属于远程命令。
@@ -126,7 +126,15 @@ ah forward rm -f <ID>
 ah --config ./connections.toml --timeout 20s c nas uname -a
 ```
 
-首次连接先通过可信渠道核对主机指纹，再按需要使用 `--trust-new-host`。补全不会因为这个选项写入主机信任记录。
+首次连接在交互终端先按可信渠道核对指纹，再回答 yes 才接受并写入 known_hosts：
+
+```text
+The authenticity of host '172.16.11.143:22' can't be established.
+Key fingerprint is SHA256:QJr5gSs2jZ+jL97fdnqUDr7VtyV41ZjkEOp+hkpjP/I.
+Are you sure you want to continue connecting (yes/no)?
+```
+
+回答 no，或没有交互终端（含 `cp` 的路径补全），都拒绝连接且不写入信任记录。已有主机密钥发生变化时始终报错，不提示覆盖。`--trust-new-host` 跳过提示直接信任。等待回答的时间不计入 `--timeout`。
 
 ## 连接管理
 

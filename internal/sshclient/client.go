@@ -26,12 +26,17 @@ type Options struct {
 	PasswordOnly bool
 	KnownHosts   string
 	// Term overrides the connection's configured TERM for this call.
-	Term    string
+	Term string
+	// Timeout bounds dialing and the SSH handshake. An interactive host key
+	// decision pauses the handshake clock, so answering a prompt does not
+	// consume the budget.
 	Timeout time.Duration
 	// Callbacks run synchronously and must arrange their own cancellation.
 	Password   func() (string, error)
 	Passphrase func(string) ([]byte, error)
-	TrustHost  func(string, string) (bool, error)
+	// TrustHost accepts a previously unknown host key. It may prompt a user and
+	// block; interactive callers get that time excluded from Timeout.
+	TrustHost func(string, string) (bool, error)
 }
 
 type Client struct {
@@ -82,9 +87,20 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		return nil, err
 	}
 	opts.KnownHosts = knownPath
-	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, opts.Timeout)
-	defer cancelHandshake()
-	auth, agentConn, err := authentication(handshakeCtx, c, opts)
+	deadline := time.Now().Add(opts.Timeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	// Authentication and transport are bounded by the deadline directly. The SSH
+	// handshake shares the same budget, but runs on a stoppable timer so a user
+	// answering a host key prompt does not consume --timeout.
+	dialCtx, cancelDial := context.WithDeadline(ctx, deadline)
+	defer cancelDial()
+	handshakeCtx, cancelHandshake := context.WithCancelCause(ctx)
+	defer cancelHandshake(nil)
+	handshakeTimer := time.AfterFunc(time.Until(deadline), func() { cancelHandshake(context.DeadlineExceeded) })
+	defer handshakeTimer.Stop()
+	auth, agentConn, err := authentication(dialCtx, c, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -94,36 +110,36 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		defer agentStop()
 	}
 	address := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
-	conn, err := dialTransport(handshakeCtx, address, c.ProxyChain())
+	conn, err := dialTransport(dialCtx, address, c.ProxyChain())
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", address, err)
 	}
 	stopHandshake := context.AfterFunc(handshakeCtx, func() { conn.Close() })
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stopHandshake()
-	deadline := time.Now().Add(opts.Timeout)
-	if d, ok := handshakeCtx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
 	if err = conn.SetDeadline(deadline); err != nil {
 		stop()
 		conn.Close()
 		return nil, err
 	}
-	cfg := &ssh.ClientConfig{User: c.User, Auth: auth, HostKeyCallback: hostKeyCallback(handshakeCtx, opts)}
+	clock := &handshakeClock{timer: handshakeTimer, conn: conn, deadline: deadline}
+	cfg := &ssh.ClientConfig{User: c.User, Auth: auth, HostKeyCallback: hostKeyCallback(handshakeCtx, opts, clock)}
 	sc, ch, reqs, err := ssh.NewClientConn(conn, address, cfg)
 	if err != nil {
 		stop()
 		conn.Close()
-		if handshakeCtx.Err() != nil {
-			return nil, handshakeCtx.Err()
+		if cause := context.Cause(handshakeCtx); cause != nil {
+			return nil, cause
 		}
 		return nil, fmt.Errorf("SSH handshake %s: %w", address, err)
 	}
 	if !stopHandshake() {
 		stop()
 		sc.Close()
-		return nil, handshakeCtx.Err()
+		if cause := context.Cause(handshakeCtx); cause != nil {
+			return nil, cause
+		}
+		return nil, context.Canceled
 	}
 	if err = conn.SetDeadline(time.Time{}); err != nil {
 		stop()
@@ -238,7 +254,30 @@ func authentication(ctx context.Context, c config.Connection, opts Options) ([]s
 	return methods, agentConn, nil
 }
 
-func hostKeyCallback(ctx context.Context, opts Options) ssh.HostKeyCallback {
+// handshakeClock applies the SSH handshake deadline through a timer that can be
+// stopped while a user decides whether to trust an unknown host key, so that
+// the decision time is excluded from --timeout.
+type handshakeClock struct {
+	timer    *time.Timer
+	conn     net.Conn
+	deadline time.Time
+	pausedAt time.Time
+}
+
+func (h *handshakeClock) pause() {
+	h.pausedAt = time.Now()
+	h.timer.Stop()
+}
+
+// resume restarts the clock with the remaining budget and moves the deadline
+// past the paused interval.
+func (h *handshakeClock) resume() error {
+	h.deadline = h.deadline.Add(time.Since(h.pausedAt))
+	h.timer.Reset(time.Until(h.deadline))
+	return h.conn.SetDeadline(h.deadline)
+}
+
+func hostKeyCallback(ctx context.Context, opts Options, clock *handshakeClock) ssh.HostKeyCallback {
 	return func(host string, remote net.Addr, key ssh.PublicKey) error {
 		verify := func() error {
 			callback, err := knownhosts.New(opts.KnownHosts)
@@ -261,7 +300,13 @@ func hostKeyCallback(ctx context.Context, opts Options) ssh.HostKeyCallback {
 		if opts.TrustHost == nil {
 			return fmt.Errorf("unknown host %s (%s): %w", host, ssh.FingerprintSHA256(key), err)
 		}
+		if clock != nil {
+			clock.pause()
+		}
 		trust, err := opts.TrustHost(host, ssh.FingerprintSHA256(key))
+		if clock != nil {
+			err = errors.Join(err, clock.resume())
+		}
 		if err != nil {
 			return err
 		}
