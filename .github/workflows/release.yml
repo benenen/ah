@@ -1,0 +1,125 @@
+name: Release
+
+# Tag pushes publish; a manual run builds and checksums everything but publishes
+# nothing, so the pipeline can be exercised without cutting a release. A dry run
+# stamps the ref name (a branch) as the version.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # A tag can point at any commit, so the release repeats the checks rather than
+  # trusting that CI already ran on this tree.
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  build:
+    name: ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # CGO_ENABLED=0 is safe: the SQLite driver is pure Go, so the binaries do
+      # not depend on the host libc.
+      - name: Build and package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eu
+          version="${VERSION#v}"
+          binary=ah
+          if [ "$GOOS" = windows ]; then
+            binary=ah.exe
+          fi
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w \
+            -X github.com/benenen/ah/internal/cli.version=${version} \
+            -X github.com/benenen/ah/internal/cli.commit=${GITHUB_SHA::7} \
+            -X github.com/benenen/ah/internal/cli.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o "dist/${binary}" ./cmd/ah
+          cp LICENSE dist/
+          cd dist
+          if [ "$GOOS" = windows ]; then
+            zip -q "ah_${version}_${GOOS}_${GOARCH}.zip" "${binary}" LICENSE
+          else
+            tar -czf "ah_${version}_${GOOS}_${GOARCH}.tar.gz" "${binary}" LICENSE
+          fi
+          rm "${binary}" LICENSE
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ah-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > checksums.txt
+          cat checksums.txt
+
+      # Upload instead of create when the release already exists, so a re-run
+      # after a failed build can finish without hand-deleting the release.
+      - name: Publish release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=(dist/*.tar.gz dist/*.zip dist/checksums.txt)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+              --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi
