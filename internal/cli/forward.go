@@ -147,13 +147,32 @@ func (a *app) forwardCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout+5*time.Second)
 			defer cancel()
+			// The launcher holds the lock while connecting or prompting for trust.
+			// Cancel startup first so it can finish and release that lock.
+			stoppedStartup := false
+			current, err := forward.Read(args[0])
+			if err != nil {
+				return err
+			}
+			if current.Status == "starting" {
+				if err := forward.Stop(ctx, current.ID); err != nil {
+					return err
+				}
+				stoppedStartup = true
+			}
 			lock, err := forward.Lock(ctx, args[0])
 			if err != nil {
 				return err
 			}
 			defer func() { _ = lock.Close() }()
-			if err := forward.Stop(ctx, args[0]); err != nil {
+			current, err = forward.Read(args[0])
+			if err != nil {
 				return err
+			}
+			if !stoppedStartup || (current.Status != "stopped" && current.Status != "failed") {
+				if err := forward.Stop(ctx, args[0]); err != nil {
+					return err
+				}
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Stopped %s\n", args[0])
 			return err

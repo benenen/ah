@@ -122,7 +122,7 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		conn.Close()
 		return nil, err
 	}
-	clock := &handshakeClock{timer: handshakeTimer, conn: conn, deadline: deadline}
+	clock := &handshakeClock{timer: handshakeTimer, conn: conn, agentConn: agentConn, deadline: deadline}
 	cfg := &ssh.ClientConfig{User: c.User, Auth: auth, HostKeyCallback: hostKeyCallback(handshakeCtx, opts, clock)}
 	sc, ch, reqs, err := ssh.NewClientConn(conn, address, cfg)
 	if err != nil {
@@ -258,23 +258,34 @@ func authentication(ctx context.Context, c config.Connection, opts Options) ([]s
 // stopped while a user decides whether to trust an unknown host key, so that
 // the decision time is excluded from --timeout.
 type handshakeClock struct {
-	timer    *time.Timer
-	conn     net.Conn
-	deadline time.Time
-	pausedAt time.Time
+	timer     *time.Timer
+	conn      net.Conn
+	agentConn net.Conn
+	deadline  time.Time
+	pausedAt  time.Time
 }
 
-func (h *handshakeClock) pause() {
+func (h *handshakeClock) pause() error {
 	h.pausedAt = time.Now()
 	h.timer.Stop()
+	return h.setDeadline(time.Time{})
+}
+
+func (h *handshakeClock) setDeadline(deadline time.Time) error {
+	err := h.conn.SetDeadline(deadline)
+	if h.agentConn != nil {
+		err = errors.Join(err, h.agentConn.SetDeadline(deadline))
+	}
+	return err
 }
 
 // resume restarts the clock with the remaining budget and moves the deadline
 // past the paused interval.
 func (h *handshakeClock) resume() error {
 	h.deadline = h.deadline.Add(time.Since(h.pausedAt))
+	err := h.setDeadline(h.deadline)
 	h.timer.Reset(time.Until(h.deadline))
-	return h.conn.SetDeadline(h.deadline)
+	return err
 }
 
 func hostKeyCallback(ctx context.Context, opts Options, clock *handshakeClock) ssh.HostKeyCallback {
@@ -301,7 +312,9 @@ func hostKeyCallback(ctx context.Context, opts Options, clock *handshakeClock) s
 			return fmt.Errorf("unknown host %s (%s): %w", host, ssh.FingerprintSHA256(key), err)
 		}
 		if clock != nil {
-			clock.pause()
+			if err := clock.pause(); err != nil {
+				return err
+			}
 		}
 		trust, err := opts.TrustHost(host, ssh.FingerprintSHA256(key))
 		if clock != nil {

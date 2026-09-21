@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,5 +146,52 @@ func TestForwardRemoveCorruptRecord(t *testing.T) {
 	}
 	if _, err := os.Stat(corrupt); !os.IsNotExist(err) {
 		t.Fatalf("record survived --force: %v", err)
+	}
+}
+
+func TestForwardKillCancelsStartingBeforeLock(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	r, err := forward.Allocate("fixture", "127.0.0.1:8080", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := forward.Lock(context.Background(), r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startup, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reg, err := forward.RegisterStarting(r, cancel)
+	if err != nil {
+		_ = lock.Close()
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		<-startup.Done()
+		// A real launcher only releases its lock once cancellation finishes.
+		closeErr := reg.Close(context.Canceled)
+		done <- errors.Join(closeErr, lock.Close())
+	}()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	cmd := New()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"forward", "kill", r.ID})
+	ctx, stop := context.WithTimeout(context.Background(), time.Second)
+	defer stop()
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := forward.Read(r.ID)
+	if err != nil || saved.Status != "stopped" {
+		t.Fatalf("record after kill: %+v %v", saved, err)
 	}
 }
