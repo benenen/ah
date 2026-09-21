@@ -390,3 +390,16 @@ ah h clean --failed --keep-days 7  # 仅删除 7 天前的失败记录
 ```
 
 天数取值 1–36500，按开始时间计算，每天为 24 小时；条件组合取交集，截止时间及之后的记录保留。running 始终保留；不带筛选时仍清理全部已结束记录。
+
+## 查看连接详情
+
+```sh
+ah inspect 108
+ah --config ./connections.toml inspect nas
+```
+
+输出缩进 JSON，包含 name、config_file、host、port、user、identity_file、proxies、sudo、sudo_shell、sftp_server、term，以及 password_configured、sudo_password_configured。
+`term` 为保存值，`effective_term` 按全局 `--term`、连接 term、本地 `$TERM`、`xterm-256color` 的顺序计算。
+未设置的字符串保留为空，代理链为空时输出 `[]`；旧版单代理配置也统一展示为 proxies 数组。
+每跳包含 address 和 authentication_configured，address 隐藏代理用户名及密码。命令不连接远端或解密凭据；密码密文、明文及私钥内容均不输出。
+名称不存在、配置损坏或参数数量错误时返回非零退出码。连接名支持 Tab 补全。
