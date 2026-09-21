@@ -33,6 +33,7 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | 命令 | 用途 |
 | --- | --- |
 | `ah list` | 列出连接名、主机、端口和登录用户 |
+| `ah inspect NAME` | 以 JSON 输出单个连接配置；凭据只显示是否已配置 |
 | `ah new NAME --host HOST --user USER` | 创建连接；不会主动连接服务器 |
 | `ah edit NAME [flags]` | 只更新明确传入的字段 |
 | `ah rm NAME` | 删除保存的连接记录，不删除远端文件 |

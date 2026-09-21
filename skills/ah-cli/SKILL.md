@@ -20,7 +20,7 @@ description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制
 
 | 用户意图 | 命令形态 |
 | --- | --- |
-| 查看、新建、编辑、删除连接 | `list`、`new NAME --host HOST --user USER`、`edit NAME`、`rm NAME` |
+| 查看、新建、编辑、删除连接 | `list`、`inspect NAME`、`new NAME --host HOST --user USER`、`edit NAME`、`rm NAME` |
 | 执行一次远程命令 | `c NAME COMMAND...`（等价 `connect`） |
 | 人工交互登录 | `c NAME`，需要可交互终端 |
 | 创建本地端口转发 | `f NAME LOCAL TARGET -d` |
@@ -41,6 +41,8 @@ ah c nas 'cd /home/alice && ls -lah | head -20'
 ```
 
 `ah ls` / `ah list` 显示 NAME、HOST、PORT、USER、TERM。TERM 是连接保存的配置值；`-` 表示未配置，连接时沿用本地 `$TERM`（显式全局 `--term` 仍可覆盖），不是远端探测结果。
+
+`ah inspect NAME` 输出单个连接的缩进 JSON（无 `--json` 标志，本来就是 JSON），包含 host/port/user/identity_file/proxies/sudo/term 等字段；密码、sudo 密码只报告是否已配置，代理认证信息隐藏。脚本要读连接详情时用它，不要解析 `ls` 的表格。
 
 自动执行任务时优先使用带命令的 `c`，避免停留在登录 shell。将 ah 自身选项放在连接名之前；之后所有参数（包括 `--help`）属于远端。
 
