@@ -1,6 +1,6 @@
 ---
 name: ah-cli
-description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件、查询重跑复制历史、管理 SSH 本地端口转发、配置 SOCKS5 多跳和 sudo。当用户提到 ah、bin/ah，或要求通过 ah 连接服务器、传文件、管理转发、配置认证/代理/提权时使用。
+description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件、查询重跑复制历史、管理 SSH 本地端口转发（含把只在内网或仅监听 127.0.0.1 的数据库、Redis、Web 后台等服务拉到本机端口）、配置 SOCKS5 多跳和 sudo。当用户提到 ah、bin/ah，或要求通过 ah 连接服务器、传文件、管理转发、访问只能经 SSH 到达的数据库/缓存/内网网站等端口、配置认证/代理/提权时使用。
 ---
 
 # 使用 ah CLI
@@ -24,6 +24,7 @@ description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制
 | 执行一次远程命令 | `c NAME COMMAND...`（等价 `connect`） |
 | 人工交互登录 | `c NAME`，需要可交互终端 |
 | 创建本地端口转发 | `f NAME LOCAL TARGET -d` |
+| 访问只在内网可达的数据库/缓存/Web 等服务 | `f NAME LOCAL TARGET -d`，再让客户端连 `127.0.0.1:LOCAL` |
 | 管理已有转发 | `f ls`、`f kill ID`、`f start ID`、`f restart ID`、`f rm ID` |
 | 上传/下载/远端互传 | `cp SOURCE DESTINATION` |
 | 查找并复用复制操作 | `history search WORDS...` → `history show ID` → `history run ID` |
@@ -79,6 +80,23 @@ ah f rm -f ID
 ```
 
 `forward/f NAME LOCAL TARGET` 的 LOCAL 是本地监听地址，TARGET 是 SSH 服务器侧访问的目标地址；只写端口时两端均默认 `127.0.0.1`。目标端口不是 SSH 登录端口。显式填写 `0.0.0.0:8080` 才监听所有 IPv4 网卡；IPv6 使用 `[::1]:8080`。复用连接的认证、代理和主机密钥校验，转发不执行 shell 或 sudo。
+
+把只在内网可达、或仅监听 `127.0.0.1` 的服务拉到本机端口：数据库、Redis、Web 管理后台、HTTP API、消息队列都走同一机制——`f NAME 13306 3306 -d` 建隧道，再让客户端连本机 `127.0.0.1:13306`。远端只需要能登录且允许 TCP 转发的 sshd：不需要脚本、不装对应客户端、不改服务配置；目标地址（如 `db-internal:3306`、`web.internal:80`）由 SSH 服务器那一侧解析和访问。一条连接可同时开多个隧道，互不影响；通道只承载 TCP，UDP 服务无法转发。
+
+选型：需要本地客户端、GUI、浏览器、多条语句或长会话时用隧道；只在远端跑一条命令且远端已有客户端时，`c NAME mysql -e '...'` 更省事。
+
+MySQL 客户端必须写 `127.0.0.1`：写 `localhost` 会被当作 unix socket，绕过隧道去连本机（`ERROR 2002 ... Can't connect to local MySQL server through socket`）；`psql`、`redis-cli` 写 `127.0.0.1` 即走 TCP，浏览器只能访问本机端口。Web 场景请求的 `Host` 是 `127.0.0.1`，按域名分站或 HTTPS 证书校验会不匹配，需要 `curl -H 'Host: ...'` 或 `--resolve`。数据库账号的 host 匹配同理——服务端看到的来源是 SSH 服务器（服务与 sshd 同机时是 `127.0.0.1`），不是运行 ah 的机器。
+
+目标不可达时客户端报错常常误导（连接被重置、`reading initial communication packet` 丢包），真实原因在 `f ls` 的 `error` 列——**任何一次失败连接之后再查一次 `f ls`**：
+
+- `dial 127.0.0.1:PORT: connect: connection refused`：SSH 没连上，核对连接配置（`-d` 时这条会直接打印）。
+- `ssh: rejected: administratively prohibited`：远端 sshd 关了 TCP 转发，远端设 `AllowTcpForwarding yes` 后 `f start ID`。
+- `ssh: rejected: connect failed ("Connection refused")`：目标服务没在监听，或端口写错。
+- `ssh: rejected: connect failed ("Name does not resolve")`：目标主机名在服务器侧解析不了。
+
+其中 `AllowTcpForwarding no` 最容易被误判：`f -d` 会成功返回 ID、`f ls` 立刻看还是 `running`（监听和 SSH 都正常），只有真有客户端连进来才暴露，别据此断定隧道可用。
+
+用完按用户意图收尾：`f kill ID` 保留记录供下次 `f start ID`，或 `f kill ID && f rm ID` 清理。`-d` 起的转发会在用户配置目录 `ah/forwards/` 留下记录，别默默留着不报。隧道不自动重连，也不随机器重启恢复。各服务的完整示例见 `docs/internal-services-over-ssh.md`，独立安装此 skill 时按本节操作即可。
 
 自动化启动优先用 `-d`，等 SSH 和本地监听就绪后返回新 ID；不加则前台运行，Ctrl+C 停止。后台不能提示密码或确认主机指纹，先准备好非交互认证和主机信任。
 

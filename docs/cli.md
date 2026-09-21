@@ -111,7 +111,7 @@ ah forward rm -f <ID>
 状态与后台日志位于用户配置目录的 `ah/forwards/<ID>.json` 和 `<ID>.log`，独立于 `--config` 指定的连接文件。
 后台进程不自动重连，也不在系统重启后自动恢复。
 复用连接配置中的 SSH 认证、SOCKS5 代理链及主机密钥校验，支持连接名 Tab 补全。
-转发由 SSH 服务处理，不执行 shell 或 sudo；服务端须允许 TCP 转发。
+转发由 SSH 服务处理，不执行 shell 或 sudo；服务端须允许 TCP 转发（`AllowTcpForwarding yes`）。把只在内网可达的数据库、Redis、Web 后台等 TCP 服务拉到本机端口使用，完整示例见 [经 SSH 访问内网服务](internal-services-over-ssh.md)。
 监听失败、SSH 断开、目标连接失败或数据传输错误会结束命令并返回非零退出码。
 `--timeout` 同时限制 SSH 建连及每次目标连接建立时间，不限制已建立连接的传输时长。
 

@@ -2,7 +2,7 @@
 
 Go 编写的 SSH 连接管理 CLI。使用 TOML 保存命名连接，支持 SSH 本地端口转发与后台管理、本地与远端文件互传、Bash/Zsh/Fish 路径 Tab 补全，并使用 SQLite 保存可查询、可重跑的复制历史。
 
-完整参数与配置见 [CLI 文档](docs/cli.md)；agent 操作与安装见 [ah-cli skill](skills/ah-cli/SKILL.md) 和 [安装说明](docs/cli.md#agent-使用)。
+完整参数与配置见 [CLI 文档](docs/cli.md)；agent 操作与安装见 [ah-cli skill](skills/ah-cli/SKILL.md) 和 [安装说明](docs/cli.md#agent-使用)。经 SSH 访问内网服务（数据库、Redis、Web 后台等）见 [internal-services-over-ssh](docs/internal-services-over-ssh.md)。
 
 ## 命令简写
 
