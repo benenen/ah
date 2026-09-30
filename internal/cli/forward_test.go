@@ -149,6 +149,70 @@ func TestForwardRemoveCorruptRecord(t *testing.T) {
 	}
 }
 
+func TestForwardRemoveAll(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	record := func(status string) forward.Record {
+		t.Helper()
+		r, err := forward.Allocate("fixture", "127.0.0.1:8080", "127.0.0.1:80")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Status = status
+		if err := r.Save(); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	stopped, failed := record("stopped"), record("failed")
+	// A running record whose control socket is gone lists as stale and cannot be stopped.
+	stale := record("running")
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupt := filepath.Join(configDir, "ah", "forwards", "0123456789abcdef.json")
+	if err := os.WriteFile(corrupt, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	exists := func(id string) bool {
+		_, err := os.Stat(filepath.Join(configDir, "ah", "forwards", id+".json"))
+		return err == nil
+	}
+
+	if _, err := execute(t, "forward", "rm", "--all", stopped.ID); err == nil {
+		t.Fatal("--all accepted an ID")
+	}
+	if _, err := execute(t, "forward", "rm"); err == nil {
+		t.Fatal("rm without ID or --all succeeded")
+	}
+
+	out, err := execute(t, "forward", "rm", "--all")
+	if err != nil {
+		t.Fatalf("rm --all: %v: %s", err, out)
+	}
+	for _, want := range []string{"Removed " + stopped.ID, "Removed " + failed.ID, "Skipped " + stale.ID + ": stale", "Skipped 0123456789abcdef: corrupt"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q: %q", want, out)
+		}
+	}
+	if exists(stopped.ID) || exists(failed.ID) || !exists(stale.ID) || !exists("0123456789abcdef") {
+		t.Fatal("rm --all removed the wrong records")
+	}
+
+	out, err = execute(t, "forward", "rm", "--all", "-f", "--timeout", "100ms")
+	if err == nil {
+		t.Fatalf("rm --all -f hid the unreachable forward: %q", out)
+	}
+	if !strings.Contains(out, "Removed 0123456789abcdef") || !strings.Contains(out, "Failed "+stale.ID) {
+		t.Fatalf("output: %q", out)
+	}
+	if exists("0123456789abcdef") || !exists(stale.ID) {
+		t.Fatal("rm --all -f must delete the corrupt record and keep the unreachable one")
+	}
+}
+
 func TestForwardKillCancelsStartingBeforeLock(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)

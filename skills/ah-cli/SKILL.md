@@ -25,7 +25,7 @@ description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制
 | 人工交互登录 | `c NAME`，需要可交互终端 |
 | 创建本地端口转发 | `f NAME LOCAL TARGET -d` |
 | 访问只在内网可达的数据库/缓存/Web 等服务 | `f NAME LOCAL TARGET -d`，再让客户端连 `127.0.0.1:LOCAL` |
-| 管理已有转发 | `f ls`、`f kill ID`、`f start ID`、`f restart ID`、`f rm ID` |
+| 管理已有转发 | `f ls`、`f kill ID`、`f start ID`、`f restart ID`、`f rm ID`、`f rm --all` |
 | 上传/下载/远端互传 | `cp SOURCE DESTINATION` |
 | 查找并复用复制操作 | `history search WORDS...` → `history show ID` → `history run ID` |
 | 持久化代理链 | `edit NAME --proxy ADDRESS --proxy ADDRESS` |
@@ -77,6 +77,8 @@ ah f start ID
 ah f restart ID
 ah f rm ID
 ah f rm -f ID
+ah f rm --all      # 清掉所有已停止/失败的记录
+ah f rm --all -f   # 连运行中的一起停掉并删除
 ```
 
 `forward/f NAME LOCAL TARGET` 的 LOCAL 是本地监听地址，TARGET 是 SSH 服务器侧访问的目标地址；只写端口时两端均默认 `127.0.0.1`。目标端口不是 SSH 登录端口。显式填写 `0.0.0.0:8080` 才监听所有 IPv4 网卡；IPv6 使用 `[::1]:8080`。复用连接的认证、代理和主机密钥校验，转发不执行 shell 或 sudo。
@@ -102,7 +104,7 @@ MySQL 客户端必须写 `127.0.0.1`：写 `localhost` 会被当作 unix socket�
 
 先用 `f ls` 核对 ID、连接名和端口：`kill ID` 停止并保留记录；`start ID` 后台启动 stopped/failed 记录，运行中报错；`restart ID` 等待旧转发停止后后台启动，已停止时直接启动。start/restart 保留原 ID，恢复配置/密钥/known_hosts 路径、工作目录和超时，读取当前连接配置；显式全局选项可覆盖路径和超时。旧记录未保存的选项使用当前默认值，首次主机信任授权不随记录复用。
 
-`f rm ID` 删除 stopped/failed 记录及日志；`f rm -f ID` 先停止 running/starting 转发再删除。仅在用户授权停止该转发时使用 `-f`。控制通道不可达时命令报错并保留记录，不按旧 PID 杀进程；`stale` 不能当作已确认停止。记录不可读时只有 `-f` 能删，且会警告其工作进程可能仍在监听；应先查清是否有残留监听再删。顶层 `ah rm NAME` 删除的是连接配置，注意命令层级。
+`f rm ID` 删除 stopped/failed 记录及日志；`f rm -f ID` 先停止 running/starting 转发再删除。仅在用户授权停止该转发时使用 `-f`。`f rm --all` 只清 stopped/failed，其余打印 Skipped；`f rm --all -f` 会停掉当前用户的全部转发，只在用户明确要求全部清理时使用，之前先 `f ls` 告诉用户会断开哪些运行中的转发。控制通道不可达时命令报错并保留记录，不按旧 PID 杀进程；`stale` 不能当作已确认停止。记录不可读时只有 `-f` 能删，且会警告其工作进程可能仍在监听；应先查清是否有残留监听再删。顶层 `ah rm NAME` 删除的是连接配置，注意命令层级。
 
 记录与日志位于用户配置目录 `ah/forwards/`，不随 `--config` 分组。确认启动成功还需核对 `f ls` 状态；报告 ID 和实际监听地址。SSH 断开或目标连接失败会结束转发，没有自动重连或开机恢复。
 

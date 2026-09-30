@@ -36,6 +36,7 @@ ah f kill <ID>       # 停止；端口立刻不可用
 ah f start <ID>      # 按原 ID 在后台重新启动
 ah f restart <ID>    # 先停止再启动
 ah f rm <ID>         # 删除停止状态的记录；运行中的用 f rm -f ID
+ah f rm --all        # 删除全部停止/失败的记录；加 -f 连运行中的一起停掉删除
 ```
 
 `-d` 表示后台运行并输出 ID；不加则前台运行，Ctrl+C 关闭监听与 SSH 连接。停止是立即生效的——客户端会报连接被拒（MySQL `ERROR 2003 ... (111)`、Redis `Connection refused`），而不是静默挂起。
@@ -162,4 +163,4 @@ SELECT SUBSTRING_INDEX(host,':',1) AS seen_from
   FROM information_schema.processlist WHERE id = CONNECTION_ID();
 ```
 
-清理：`ah f kill <ID> && ah f rm <ID>`（逐个），再 `docker rm -f ah-lab-sshd ah-lab-mysql ah-lab-redis ah-lab-web && docker network rm ah-lab`。
+清理：`ah f rm --all -f`（或逐个 `ah f kill <ID> && ah f rm <ID>`），再 `docker rm -f ah-lab-sshd ah-lab-mysql ah-lab-redis ah-lab-web && docker network rm ah-lab`。

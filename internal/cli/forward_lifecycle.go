@@ -47,56 +47,96 @@ func (a *app) captureForwardOptions(r *forward.Record) error {
 }
 
 func (a *app) forwardRemoveCommand() *cobra.Command {
-	var force bool
+	var force, all bool
 	cmd := &cobra.Command{
-		Use: "rm ID", Short: "Remove a stopped forward; --force stops it first", Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout+5*time.Second)
-			defer cancel()
-			// The launcher holds the lifecycle lock until startup completes.
-			// Cancel its control socket first so --force also interrupts SSH setup.
-			if force {
-				if current, readErr := forward.Read(args[0]); readErr == nil && current.Status == "starting" {
-					if err := forward.Stop(ctx, current.ID); err != nil {
+		Use: "rm ID | --all", Short: "Remove a stopped forward; --force stops it first",
+		Long: "Remove a stopped or failed forward record and its log.\n\n" +
+			"--force stops a running or starting forward first and also deletes unreadable records.\n" +
+			"--all removes every stopped or failed forward and skips the rest; with --force it removes all of them.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if all {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !all {
+				return a.removeForward(cmd, args[0], force)
+			}
+			records, err := forward.List(cmd.Context())
+			if err != nil {
+				return err
+			}
+			var failed []error
+			for _, r := range records {
+				if !force && r.Status != "stopped" && r.Status != "failed" {
+					if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Skipped %s: %s (use --force)\n", r.ID, r.Status); err != nil {
+						return err
+					}
+					continue
+				}
+				// Keep going so that one stuck forward does not block the others.
+				if err := a.removeForward(cmd, r.ID, force); err != nil {
+					failed = append(failed, err)
+					if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Failed %s: %v\n", r.ID, err); err != nil {
 						return err
 					}
 				}
 			}
-			lock, err := forward.Lock(ctx, args[0])
-			if err != nil {
-				return err
+			if len(failed) > 0 {
+				return fmt.Errorf("%d of %d forwards not removed: %w", len(failed), len(records), errors.Join(failed...))
 			}
-			defer func() { err = errors.Join(err, lock.Close()) }()
-			r, err := forward.Read(args[0])
-			if err != nil {
-				if !force {
-					return fmt.Errorf("read forward %s: %w (use --force to delete an unreadable record)", args[0], err)
-				}
-				// The unreadable record hides its control socket, so a worker started
-				// from it cannot be confirmed stopped; deleting may leave it listening.
-				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: forward %s is unreadable (%v); a worker started from it cannot be stopped and may keep listening\n", args[0], err); err != nil {
-					return err
-				}
-				if err := forward.RemoveCorrupt(args[0]); err != nil {
-					return err
-				}
-				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s\n", args[0])
-				return err
-			}
-			if force && (r.Status == "running" || r.Status == "starting") {
-				if err := forward.Stop(ctx, r.ID); err != nil {
-					return err
-				}
-			}
-			if err := forward.Remove(r.ID); err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s\n", r.ID)
-			return err
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "stop an active forward before removing it")
+	cmd.Flags().BoolVar(&all, "all", false, "remove every stopped or failed forward (with --force, every forward)")
 	return cmd
+}
+
+func (a *app) removeForward(cmd *cobra.Command, id string, force bool) (err error) {
+	ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout+5*time.Second)
+	defer cancel()
+	// The launcher holds the lifecycle lock until startup completes.
+	// Cancel its control socket first so --force also interrupts SSH setup.
+	if force {
+		if current, readErr := forward.Read(id); readErr == nil && current.Status == "starting" {
+			if err := forward.Stop(ctx, current.ID); err != nil {
+				return err
+			}
+		}
+	}
+	lock, err := forward.Lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	r, err := forward.Read(id)
+	if err != nil {
+		if !force {
+			return fmt.Errorf("read forward %s: %w (use --force to delete an unreadable record)", id, err)
+		}
+		// The unreadable record hides its control socket, so a worker started
+		// from it cannot be confirmed stopped; deleting may leave it listening.
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: forward %s is unreadable (%v); a worker started from it cannot be stopped and may keep listening\n", id, err); err != nil {
+			return err
+		}
+		if err := forward.RemoveCorrupt(id); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s\n", id)
+		return err
+	}
+	if force && (r.Status == "running" || r.Status == "starting") {
+		if err := forward.Stop(ctx, r.ID); err != nil {
+			return err
+		}
+	}
+	if err := forward.Remove(r.ID); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s\n", r.ID)
+	return err
 }
 
 func (a *app) forwardStartCommand(restart bool) *cobra.Command {
