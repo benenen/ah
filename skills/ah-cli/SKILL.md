@@ -1,6 +1,6 @@
 ---
 name: ah-cli
-description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件、查询重跑复制历史、管理 SSH 本地端口转发（含把只在内网或仅监听 127.0.0.1 的数据库、Redis、Web 后台等服务拉到本机端口）、配置 SOCKS5 多跳和 sudo。当用户提到 ah、bin/ah，或要求通过 ah 连接服务器、传文件、管理转发、访问只能经 SSH 到达的数据库/缓存/内网网站等端口、配置认证/代理/提权时使用。
+description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件、查询重跑复制历史、管理 SSH 端口转发（含把只在内网或仅监听 127.0.0.1 的数据库、Redis、Web 后台等服务拉到本机端口、起 SOCKS5 代理浏览内网网站、把本机服务暴露给服务器）、配置 SOCKS5 多跳和 sudo。当用户提到 ah、bin/ah，或要求通过 ah 连接服务器、传文件、管理转发、访问只能经 SSH 到达的数据库/缓存/内网网站等端口、配置认证/代理/提权时使用。
 ---
 
 # 使用 ah CLI
@@ -24,6 +24,8 @@ description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制
 | 执行一次远程命令 | `c NAME COMMAND...`（等价 `connect`） |
 | 人工交互登录 | `c NAME`，需要可交互终端 |
 | 创建本地端口转发 | `f NAME LOCAL TARGET -d` |
+| 浏览器/工具经服务器访问多个内网站点 | `f NAME 1080 -D -d`，客户端用 socks5h 代理 `127.0.0.1:1080` |
+| 让服务器访问本机服务 | `f NAME REMOTE_PORT LOCAL_PORT -R -d` |
 | 访问只在内网可达的数据库/缓存/Web 等服务 | `f NAME LOCAL TARGET -d`，再让客户端连 `127.0.0.1:LOCAL` |
 | 管理已有转发 | `f ls`、`f kill ID`、`f start ID`、`f restart ID`、`f rm ID`、`f rm --all` |
 | 上传/下载/远端互传 | `cp SOURCE DESTINATION` |
@@ -66,7 +68,7 @@ sudo 复制需要独立 `sftp-server` 和相应 sudo 权限，可用 `edit NAME 
 
 按最终 SSH 主机校验 known_hosts。首次连接的交互终端会打印目标地址和 SSH 指纹并等待 yes/no，先核对指纹再回答；无交互终端（含补全）不会提示，必须显式加 `--trust-new-host` 才能接受未知主机。显式首次信任仍需已有授权并核对可信指纹；等待交互确认的时间不计入 `--timeout`。主机密钥变化时核查，不盲删记录。主密钥与 TOML 分开保管，缺失密钥或密文无法解密时修复正确配置/备份，不生成替代密钥冒充恢复成功。
 
-### 本地端口转发
+### 端口转发
 
 ```sh
 ah f nas 8080 80 -d
@@ -79,7 +81,11 @@ ah f rm ID
 ah f rm -f ID
 ah f rm --all      # 清掉所有已停止/失败的记录
 ah f rm --all -f   # 连运行中的一起停掉并删除
+ah f nas 1080 -D -d            # SOCKS5 代理
+ah f nas 9000 3000 -R -d       # 服务器 127.0.0.1:9000 → 本机 3000
 ```
+
+`-L`（默认）/`-D`/`-R` 选择转发类型，`f ls` 的 TYPE 列显示对应参数。`-D` 的域名由服务器解析，客户端必须用 `socks5h://127.0.0.1:1080` 或 `curl --socks5-hostname`，写 `socks5://` 会在本机解析内网域名而失败；单个目标失败不结束代理，原因看 `ah/forwards/ID.log`。`-R` 的服务器侧监听默认只在回环，对外监听需要 sshd `GatewayPorts`；目标失败会结束转发。不要擅自让 `-D` 监听 `0.0.0.0`。
 
 `forward/f NAME LOCAL TARGET` 的 LOCAL 是本地监听地址，TARGET 是 SSH 服务器侧访问的目标地址；只写端口时两端均默认 `127.0.0.1`。目标端口不是 SSH 登录端口。显式填写 `0.0.0.0:8080` 才监听所有 IPv4 网卡；IPv6 使用 `[::1]:8080`。复用连接的认证、代理和主机密钥校验，转发不执行 shell 或 sudo。
 

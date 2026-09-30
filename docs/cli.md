@@ -8,7 +8,7 @@
 - [全局选项](#全局选项)
 - [连接管理](#连接管理)
 - [交互登录与远程命令](#交互登录与远程命令)
-- [本地端口转发](#本地端口转发)
+- [端口转发](#端口转发)
 - [文件复制](#文件复制)
 - [历史查询与重跑](#历史查询与重跑)
 - [SOCKS5 代理链](#socks5-代理链)
@@ -39,7 +39,7 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | `ah rm NAME` | 删除保存的连接记录，不删除远端文件 |
 | `ah connect NAME [COMMAND [ARG...]]` | 交互登录或执行远程命令 |
 | `ah c NAME [COMMAND [ARG...]]` | `connect` 的简写 |
-| `ah forward NAME LOCAL TARGET` | 通过 SSH 转发本地 TCP 端口 |
+| `ah forward NAME LOCAL TARGET` | 通过 SSH 转发 TCP 端口；`-D` 起 SOCKS5 代理，`-R` 远程转发 |
 | `ah cp SOURCE DESTINATION` | 单个普通文件的本地/远端复制 |
 | `ah history [QUERY...]` | 查询复制历史 |
 | `ah history search [QUERY...]` | 显式的历史查询子命令 |
@@ -64,7 +64,7 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 
 完整命令与简写使用相同参数，均在 `ah --help` 中标注。`ah h` 查询历史，`ah v` 输出版本，`ah -h` 显示帮助。
 
-## 本地端口转发
+## 端口转发
 
 ```sh
 ah forward A 8080 80 -d
@@ -84,7 +84,7 @@ ah forward rm --all
 ah forward rm --all -f
 ```
 
-用法为 `ah forward NAME LOCAL TARGET`，可简写为 `ah f NAME LOCAL TARGET`，两个地址分别传参，不使用 `-L`。
+用法为 `ah forward NAME LOCAL TARGET`，可简写为 `ah f NAME LOCAL TARGET`，两个地址分别传参，不采用 ssh `-L 8080:host:80` 的合并格式。
 
 - `NAME`：已保存的 SSH 连接名。
 - 第一个端口 `LOCAL`：**本地监听端口**，例如 `8080` 或 `0.0.0.0:8080`。
@@ -98,8 +98,8 @@ ah forward rm --all -f
 
 新建转发时自动生成 ID。加 `-d` / `--daemon` 后脱离终端运行，SSH 和本地监听准备就绪后才返回 ID；
 不加则在前台运行，Ctrl+C 关闭监听、活动连接及 SSH 连接。后台模式支持 Linux/macOS，使用已保存密码、可用私钥或 SSH agent，不能交互输入密码或私钥口令。
-`ah forward ls` 显示当前用户的所有转发记录，包括 ID、连接名、本地/目标地址、PID、状态和错误；
-`ah forward ls --json` 以稳定字段输出同一份列表（`id`、`name`、`listen`、`target`、`pid`、`status`、`started`、`error`），便于脚本消费，内部字段不进输出。
+`ah forward ls` 显示当前用户的所有转发记录，包括 ID、类型、连接名、监听/目标地址、PID、状态和错误；
+`ah forward ls --json` 以稳定字段输出同一份列表（`id`、`type`、`name`、`listen`、`target`、`pid`、`status`、`started`、`error`；`type` 为 `local`/`dynamic`/`remote`），便于脚本消费，内部字段不进输出。
 `ah forward kill ID` 通过私有控制通道停止对应转发，并等待关闭完成。前台转发也可按 ID 停止。
 `ah forward start ID` 按原 ID 在后台启动已停止或失败的转发；对运行中的转发报错。
 `ah forward restart ID` 等待旧转发停止后按原 ID 后台启动，已停止或失败时直接启动。
@@ -118,6 +118,25 @@ ah forward rm --all -f
 转发由 SSH 服务处理，不执行 shell 或 sudo；服务端须允许 TCP 转发（`AllowTcpForwarding yes`）。把只在内网可达的数据库、Redis、Web 后台等 TCP 服务拉到本机端口使用，完整示例见 [经 SSH 访问内网服务](internal-services-over-ssh.md)。
 监听失败、SSH 断开、目标连接失败或数据传输错误会结束命令并返回非零退出码。
 `--timeout` 同时限制 SSH 建连及每次目标连接建立时间，不限制已建立连接的传输时长。
+
+### 动态 SOCKS5 与远程转发
+
+```sh
+ah forward A 1080 -D -d
+# 本地 127.0.0.1:1080 起 SOCKS5 代理，经 A 访问任意目标
+curl --socks5-hostname 127.0.0.1:1080 http://web.internal/
+ah forward A 9000 3000 -R -d
+# SSH 服务器 A 上的 127.0.0.1:9000 → 本机 127.0.0.1:3000
+```
+
+转发分三种，由参数选择，三者互斥：
+
+- `-L` / `--local`（默认，可省略）：`NAME LOCAL TARGET`，本地监听，目标由 SSH 服务器访问。
+- `-D` / `--dynamic`：`NAME LOCAL`，本地起 SOCKS5 代理（无认证，仅 CONNECT，支持 IPv4/IPv6/域名）。每个请求由 SSH 服务器连接目标，域名也在服务器侧解析；浏览器需开启“通过 SOCKS 代理 DNS”，curl 用 `--socks5-hostname` 或 `socks5h://`，否则内网域名会在本机解析失败。单个目标连不上只向该请求回复失败并记入 stderr（后台时即日志），不结束代理；SSH 断开才结束。
+- `-R` / `--remote`：`NAME REMOTE LOCAL_TARGET`，SSH 服务器监听 REMOTE，连接转到运行 ah 的机器能访问的 LOCAL_TARGET。与 `-L` 一样，目标连接失败会结束转发。服务器侧监听非回环地址需要 sshd `GatewayPorts`，否则 sshd 仍只监听回环；远端监听地址请写 IP。
+
+`-D` 显式写 `0.0.0.0:1080` 会让局域网里任何人都能借这台 SSH 服务器上网，只在确有需要时这样做。
+三种转发共用 ID、`-d`、`ls`/`kill`/`start`/`restart`/`rm` 生命周期；`ls` 的 TYPE 列显示 `-L`/`-D`/`-R`，`-D` 的 TARGET 显示 `(socks5)`，LISTEN 对 `-R` 是服务器侧地址。旧版记录按 `-L` 处理。
 
 ## 全局选项
 

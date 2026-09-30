@@ -14,7 +14,7 @@ func TestControlIdentityAndStaleRecords(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
-	r, err := Allocate("test", "127.0.0.1:8080", "127.0.0.1:80")
+	r, err := Allocate(Local, "test", "127.0.0.1:8080", "127.0.0.1:80")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestRemoveAndLifecycleLock(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
-	r, err := Allocate("test", "127.0.0.1:8080", "127.0.0.1:80")
+	r, err := Allocate(Local, "test", "127.0.0.1:8080", "127.0.0.1:80")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestListReportsCorruptRecords(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
-	good, err := Allocate("test", "127.0.0.1:8080", "127.0.0.1:80")
+	good, err := Allocate(Local, "test", "127.0.0.1:8080", "127.0.0.1:80")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestRemoveCorrupt(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
-	r, err := Allocate("test", "127.0.0.1:8080", "127.0.0.1:80")
+	r, err := Allocate(Local, "test", "127.0.0.1:8080", "127.0.0.1:80")
 	if err != nil {
 		t.Fatal(err)
 	}

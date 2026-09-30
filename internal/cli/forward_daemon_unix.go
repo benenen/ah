@@ -38,7 +38,15 @@ func (a *app) startForwardDaemon(cmd *cobra.Command, record forward.Record) erro
 	if a.trustNewHost {
 		args = append(args, "--trust-new-host")
 	}
-	args = append(args, "forward", record.Name, record.Listen, record.Target, "--forward-worker", record.ID)
+	switch record.Kind() {
+	case forward.Dynamic:
+		args = append(args, "forward", record.Name, record.Listen, "--dynamic")
+	case forward.Remote:
+		args = append(args, "forward", record.Name, record.Listen, record.Target, "--remote")
+	default:
+		args = append(args, "forward", record.Name, record.Listen, record.Target)
+	}
+	args = append(args, "--forward-worker", record.ID)
 	read, write, err := os.Pipe()
 	if err != nil {
 		return err

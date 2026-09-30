@@ -47,6 +47,10 @@ func TestForwardArguments(t *testing.T) {
 		{"forward", "dev"}, {"forward", "dev", "8080"},
 		{"forward", "dev", "-L", "8080:localhost:80"},
 		{"forward", "dev", "8080", "localhost:80", "extra"},
+		{"forward", "dev", "1080", "80", "-D"},
+		{"forward", "dev", "9000", "-R"},
+		{"forward", "dev", "8080", "80", "-L", "-R"},
+		{"forward", "dev", "1080", "-D", "-R"},
 	} {
 		if _, err := execute(t, args...); err == nil {
 			t.Fatalf("accepted %v", args)
@@ -65,7 +69,7 @@ func TestForwardListJSON(t *testing.T) {
 	if strings.TrimSpace(out) != "[]" {
 		t.Fatalf("empty listing must stay valid JSON: %q", out)
 	}
-	if _, err := forward.Allocate("dev", "127.0.0.1:8080", "127.0.0.1:80"); err != nil {
+	if _, err := forward.Allocate(forward.Local, "dev", "127.0.0.1:8080", "127.0.0.1:80"); err != nil {
 		t.Fatal(err)
 	}
 	configDir, err := os.UserConfigDir()
@@ -83,6 +87,7 @@ func TestForwardListJSON(t *testing.T) {
 	}
 	var listed []struct {
 		ID      string    `json:"id"`
+		Type    string    `json:"type"`
 		Name    string    `json:"name"`
 		Listen  string    `json:"listen"`
 		Target  string    `json:"target"`
@@ -101,7 +106,7 @@ func TestForwardListJSON(t *testing.T) {
 	if len(listed) != 2 || status["0123456789abcdef"] != "corrupt" {
 		t.Fatalf("unexpected records: %v", listed)
 	}
-	if listed[1].Name != "dev" || listed[1].Status != "starting" || listed[1].Listen != "127.0.0.1:8080" {
+	if listed[1].Name != "dev" || listed[1].Type != "local" || listed[1].Status != "starting" || listed[1].Listen != "127.0.0.1:8080" {
 		t.Fatalf("readable record: %v", listed[1])
 	}
 	if strings.Contains(out, "socket") || strings.Contains(out, "key_path") {
@@ -155,7 +160,7 @@ func TestForwardRemoveAll(t *testing.T) {
 	t.Setenv("HOME", dir)
 	record := func(status string) forward.Record {
 		t.Helper()
-		r, err := forward.Allocate("fixture", "127.0.0.1:8080", "127.0.0.1:80")
+		r, err := forward.Allocate(forward.Local, "fixture", "127.0.0.1:8080", "127.0.0.1:80")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -217,7 +222,7 @@ func TestForwardKillCancelsStartingBeforeLock(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
-	r, err := forward.Allocate("fixture", "127.0.0.1:8080", "127.0.0.1:80")
+	r, err := forward.Allocate(forward.Local, "fixture", "127.0.0.1:8080", "127.0.0.1:80")
 	if err != nil {
 		t.Fatal(err)
 	}

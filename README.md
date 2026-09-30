@@ -1,6 +1,6 @@
 # ah
 
-Go 编写的 SSH 连接管理 CLI。使用 TOML 保存命名连接，支持 SSH 本地端口转发与后台管理、本地与远端文件互传、Bash/Zsh/Fish 路径 Tab 补全，并使用 SQLite 保存可查询、可重跑的复制历史。
+Go 编写的 SSH 连接管理 CLI。使用 TOML 保存命名连接，支持 SSH 本地/远程端口转发、动态 SOCKS5 代理与后台管理、本地与远端文件互传、Bash/Zsh/Fish 路径 Tab 补全，并使用 SQLite 保存可查询、可重跑的复制历史。
 
 完整参数与配置见 [CLI 文档](docs/cli.md)；agent 操作与安装见 [ah-cli skill](skills/ah-cli/SKILL.md) 和 [安装说明](docs/cli.md#agent-使用)。经 SSH 访问内网服务（数据库、Redis、Web 后台等）见 [internal-services-over-ssh](docs/internal-services-over-ssh.md)。
 
@@ -40,7 +40,7 @@ tar -xzf ah_0.1.0_linux_amd64.tar.gz
 
 后续示例假设 `ah` 已加入 PATH。
 
-## 本地端口转发
+## 端口转发
 
 ```sh
 ah f A 8080 80 -d
@@ -57,7 +57,7 @@ ah f rm <ID>
 ah f rm -f <ID>
 ```
 
-用法为 `ah forward NAME LOCAL TARGET`，可简写为 `ah f NAME LOCAL TARGET`，两个地址分别传参，不使用 `-L`。
+用法为 `ah forward NAME LOCAL TARGET`，可简写为 `ah f NAME LOCAL TARGET`，两个地址分别传参，不采用 ssh `-L 8080:host:80` 的合并格式。
 
 - `NAME`：已保存的 SSH 连接名。
 - 第一个端口 `LOCAL`：**本地监听端口**，例如 `8080` 或 `0.0.0.0:8080`。
@@ -71,7 +71,7 @@ ah f rm -f <ID>
 
 新建转发时自动生成 ID。加 `-d` / `--daemon` 后脱离终端运行，SSH 和本地监听准备就绪后才返回 ID；
 不加则在前台运行，Ctrl+C 关闭监听、活动连接及 SSH 连接。后台模式支持 Linux/macOS，使用已保存密码、可用私钥或 SSH agent，不能交互输入密码或私钥口令。
-`ah f ls` 显示当前用户的所有转发记录，包括 ID、连接名、本地/目标地址、PID、状态和错误；
+`ah f ls` 显示当前用户的所有转发记录，包括 ID、类型、连接名、监听/目标地址、PID、状态和错误；
 `ah f kill ID` 通过私有控制通道停止对应转发，并等待关闭完成。前台转发也可按 ID 停止。
 `ah f start ID` 按原 ID 在后台启动已停止或失败的转发；对运行中的转发报错。
 `ah f restart ID` 等待旧转发停止后按原 ID 后台启动，已停止或失败时直接启动。
@@ -86,6 +86,25 @@ ah f rm -f <ID>
 转发由 SSH 服务处理，不执行 shell 或 sudo；服务端须允许 TCP 转发。
 监听失败、SSH 断开、目标连接失败或数据传输错误会结束命令并返回非零退出码。
 `--timeout` 同时限制 SSH 建连及每次目标连接建立时间，不限制已建立连接的传输时长。
+
+### 动态 SOCKS5 与远程转发
+
+```sh
+ah f A 1080 -D -d
+# 本地 127.0.0.1:1080 起 SOCKS5 代理，经 A 访问任意目标
+curl --socks5-hostname 127.0.0.1:1080 http://web.internal/
+ah f A 9000 3000 -R -d
+# SSH 服务器 A 上的 127.0.0.1:9000 → 本机 127.0.0.1:3000
+```
+
+转发分三种，由参数选择，三者互斥：
+
+- `-L` / `--local`（默认，可省略）：`NAME LOCAL TARGET`，本地监听，目标由 SSH 服务器访问。
+- `-D` / `--dynamic`：`NAME LOCAL`，本地起 SOCKS5 代理（无认证，仅 CONNECT，支持 IPv4/IPv6/域名）。每个请求由 SSH 服务器连接目标，域名也在服务器侧解析；浏览器需开启“通过 SOCKS 代理 DNS”，curl 用 `--socks5-hostname` 或 `socks5h://`，否则内网域名会在本机解析失败。单个目标连不上只向该请求回复失败并记入 stderr（后台时即日志），不结束代理；SSH 断开才结束。
+- `-R` / `--remote`：`NAME REMOTE LOCAL_TARGET`，SSH 服务器监听 REMOTE，连接转到运行 ah 的机器能访问的 LOCAL_TARGET。与 `-L` 一样，目标连接失败会结束转发。服务器侧监听非回环地址需要 sshd `GatewayPorts`，否则 sshd 仍只监听回环；远端监听地址请写 IP。
+
+`-D` 显式写 `0.0.0.0:1080` 会让局域网里任何人都能借这台 SSH 服务器上网，只在确有需要时这样做。
+三种转发共用 ID、`-d`、`ls`/`kill`/`start`/`restart`/`rm` 生命周期；`ls` 的 TYPE 列显示 `-L`/`-D`/`-R`，`-D` 的 TARGET 显示 `(socks5)`，LISTEN 对 `-R` 是服务器侧地址。旧版记录按 `-L` 处理。
 
 ## 管理连接
 

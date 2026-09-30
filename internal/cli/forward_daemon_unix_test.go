@@ -17,9 +17,12 @@ import (
 	"github.com/benenen/ah/internal/forward"
 	"github.com/benenen/ah/internal/testutil"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/net/proxy"
 )
 
-func TestForwardDaemonLifecycle(t *testing.T) {
+// buildAh builds the CLI so daemon tests exercise real detached workers.
+func buildAh(t *testing.T, dir string) string {
+	t.Helper()
 	cacheOutput, err := exec.Command("go", "env", "GOCACHE", "GOMODCACHE").Output()
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +31,20 @@ func TestForwardDaemonLifecycle(t *testing.T) {
 	if len(caches) != 2 {
 		t.Fatalf("Go caches: %s", cacheOutput)
 	}
+	binary := filepath.Join(dir, "ah-bin")
+	buildCtx, buildCancel := context.WithTimeout(context.Background(), time.Minute)
+	defer buildCancel()
+	build := exec.CommandContext(buildCtx, "go", "build", "-o", binary, "./cmd/ah")
+	build.Dir = "../.."
+	// Preserve the existing build cache/module cache despite our isolated HOME.
+	build.Env = append(os.Environ(), "GOCACHE="+caches[0], "GOMODCACHE="+caches[1])
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %s: %v", output, err)
+	}
+	return binary
+}
+
+func TestForwardDaemonLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	// On macOS os.UserConfigDir uses HOME.
@@ -53,16 +70,7 @@ func TestForwardDaemonLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(dir, "ah-bin")
-	buildCtx, buildCancel := context.WithTimeout(context.Background(), time.Minute)
-	defer buildCancel()
-	build := exec.CommandContext(buildCtx, "go", "build", "-o", binary, "./cmd/ah")
-	build.Dir = "../.."
-	// Preserve the existing build cache/module cache despite our isolated HOME.
-	build.Env = append(os.Environ(), "GOCACHE="+caches[0], "GOMODCACHE="+caches[1])
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %s: %v", output, err)
-	}
+	binary := buildAh(t, dir)
 	run := func(args ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -271,4 +279,148 @@ func TestForwardDaemonLifecycle(t *testing.T) {
 		t.Fatalf("starting record survived: %v", err)
 	}
 
+}
+
+func TestForwardDaemonDynamicAndRemote(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("SSH_AUTH_SOCK", "")
+	f := testutil.StartRemoteForwardSSH(t, func(ch ssh.NewChannel) {
+		var address struct {
+			Host       string
+			Port       uint32
+			Origin     string
+			OriginPort uint32
+		}
+		if ssh.Unmarshal(ch.ExtraData(), &address) != nil || address.Host != "app.internal" {
+			_ = ch.Reject(ssh.ConnectionFailed, "unreachable")
+			return
+		}
+		channel, requests, err := ch.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = channel.Close() }()
+		go ssh.DiscardRequests(requests)
+		data, err := io.ReadAll(channel)
+		if err == nil {
+			_, _ = channel.Write(data)
+		}
+		_ = channel.CloseWrite()
+	})
+	path := filepath.Join(dir, "connections.toml")
+	if err := (config.Store{Path: path}).Update(context.Background(), func(m map[string]config.Connection) error {
+		m["fixture"] = f.Connection
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	binary := buildAh(t, dir)
+	run := func(args ...string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		base := []string{"--config", path, "--known-hosts", f.KnownHosts, "--timeout", "2s", "forward"}
+		output, err := exec.CommandContext(ctx, binary, append(base, args...)...).CombinedOutput()
+		return strings.TrimSpace(string(output)), err
+	}
+	unusedPort := func() string {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, port, _ := net.SplitHostPort(ln.Addr().String())
+		_ = ln.Close()
+		return port
+	}
+	echo := func(dial func() (net.Conn, error)) {
+		t.Helper()
+		c, err := dial()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = c.Close() }()
+		_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+		_, _ = c.Write([]byte("ping"))
+		_ = c.(interface{ CloseWrite() error }).CloseWrite()
+		data, err := io.ReadAll(c)
+		if err != nil || string(data) != "ping" {
+			t.Fatalf("echo: %q %v", data, err)
+		}
+	}
+
+	socksPort := unusedPort()
+	dynamicID, err := run("fixture", socksPort, "-D", "-d")
+	if err != nil {
+		t.Fatalf("start -D: %s: %v", dynamicID, err)
+	}
+	t.Cleanup(func() { _, _ = run("kill", dynamicID) })
+	socks, err := proxy.SOCKS5("tcp", "127.0.0.1:"+socksPort, nil, proxy.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaSOCKS := func() (net.Conn, error) { return socks.Dial("tcp", "app.internal:80") }
+	echo(viaSOCKS)
+	if c, err := socks.Dial("tcp", "down.internal:80"); err == nil {
+		_ = c.Close()
+		t.Fatal("rejected target connected")
+	}
+	echo(viaSOCKS) // one failed request leaves the proxy running
+
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = target.Close() }()
+	go func() {
+		for {
+			c, err := target.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = c.Close() }()
+				data, _ := io.ReadAll(c)
+				_, _ = c.Write(data)
+			}()
+		}
+	}()
+	remotePort := unusedPort()
+	remoteID, err := run("fixture", remotePort, target.Addr().String(), "-R", "-d")
+	if err != nil {
+		t.Fatalf("start -R: %s: %v", remoteID, err)
+	}
+	t.Cleanup(func() { _, _ = run("kill", remoteID) })
+	// The fixture SSH server listens on this machine.
+	viaServer := func() (net.Conn, error) { return net.DialTimeout("tcp", "127.0.0.1:"+remotePort, time.Second) }
+	echo(viaServer)
+
+	list, err := run("ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"TYPE", dynamicID + "  -D", "(socks5)", remoteID + "  -R", "127.0.0.1:" + remotePort} {
+		if !strings.Contains(list, want) {
+			t.Fatalf("list missing %q:\n%s", want, list)
+		}
+	}
+	listJSON, err := run("ls", "--json")
+	if err != nil || !strings.Contains(listJSON, `"type": "dynamic"`) || !strings.Contains(listJSON, `"type": "remote"`) {
+		t.Fatalf("JSON: %s %v", listJSON, err)
+	}
+	// A restarted worker must keep its type, so the daemon relaunch carries it.
+	for _, id := range []string{dynamicID, remoteID} {
+		if output, err := run("restart", id); err != nil || output != id {
+			t.Fatalf("restart %s: %s %v", id, output, err)
+		}
+	}
+	echo(viaSOCKS)
+	echo(viaServer)
+	if output, err := run("rm", "--all", "-f"); err != nil {
+		t.Fatalf("rm --all -f: %s %v", output, err)
+	}
+	if c, err := net.DialTimeout("tcp", "127.0.0.1:"+socksPort, time.Second); err == nil {
+		_ = c.Close()
+		t.Fatal("SOCKS listener survived removal")
+	}
 }

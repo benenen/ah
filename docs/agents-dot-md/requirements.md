@@ -109,10 +109,13 @@ ah h clean --failed --keep-days 7  # 仅删除 7 天前的失败记录
 
 天数取值 1–36500，按开始时间计算，每天为 24 小时；条件组合取交集，截止时间及之后的记录保留。running 始终保留；不带筛选时仍清理全部已结束记录。
 
-## 本地 TCP 转发契约
+## TCP 转发契约
 
 `ah forward NAME LOCAL TARGET [-d]`：LOCAL 和 TARGET 分别为端口或 HOST:PORT，只写端口均默认 127.0.0.1；
-IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采用 -L 合并参数格式。
+IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采用 ssh -L 的合并参数格式。
+`-L`（默认）、`-D`、`-R` 互斥选择类型，记录保存类型，缺省视为 -L；ls 以 TYPE 列显示参数名，JSON 增加 type（local/dynamic/remote）。
+`-D NAME LOCAL`：本地 SOCKS5（无认证、仅 CONNECT、IPv4/IPv6/域名），目标由 SSH 服务器拨号和解析；单个请求的握手/拨号/传输失败只结束该请求并写 stderr，不结束代理，拨号超时向客户端回复失败。
+`-R NAME REMOTE LOCAL_TARGET`：tcpip-forward 在服务器监听，连接由本机拨 LOCAL_TARGET；远端监听请求受 --timeout 限制，目标失败规则同 -L。
 复用命名连接的 SSH 认证、代理链和主机密钥校验；目标由远端访问。转发不执行 shell/sudo。
 
 每次新建生成独立 ID，-d 后台运行（Linux/macOS），无 -d 保留前台和 Ctrl+C。

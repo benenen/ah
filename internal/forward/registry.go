@@ -19,8 +19,16 @@ import (
 	"github.com/gofrs/flock"
 )
 
+// Forward types. Records written before types existed are local forwards.
+const (
+	Local   = "local"   // local listener, target dialed by the SSH server (-L)
+	Remote  = "remote"  // SSH server listener, target dialed locally (-R)
+	Dynamic = "dynamic" // local SOCKS5 proxy, targets dialed by the SSH server (-D)
+)
+
 type Record struct {
 	ID         string
+	Type       string `json:",omitempty"`
 	Name       string
 	Listen     string
 	Target     string
@@ -34,6 +42,14 @@ type Record struct {
 	KnownHosts string        `json:",omitempty"`
 	WorkDir    string        `json:",omitempty"`
 	Timeout    time.Duration `json:",omitempty"`
+}
+
+// Kind returns the forward type, treating an untyped record as Local.
+func (r Record) Kind() string {
+	if r.Type == "" {
+		return Local
+	}
+	return r.Type
 }
 
 // Lock serializes lifecycle commands for an ID. Lock files must remain in place
@@ -108,7 +124,7 @@ func recordPath(id string) (string, error) {
 }
 
 // Allocate reserves a unique ID before a process is started.
-func Allocate(name, listen, target string) (Record, error) {
+func Allocate(kind, name, listen, target string) (Record, error) {
 	dir, err := directory()
 	if err != nil {
 		return Record{}, err
@@ -120,7 +136,7 @@ func Allocate(name, listen, target string) (Record, error) {
 	if _, err = rand.Read(random[:]); err != nil {
 		return Record{}, err
 	}
-	r := Record{ID: hex.EncodeToString(random[:]), Name: name, Listen: listen, Target: target, Status: "starting", Started: time.Now()}
+	r := Record{ID: hex.EncodeToString(random[:]), Type: kind, Name: name, Listen: listen, Target: target, Status: "starting", Started: time.Now()}
 	p, _ := recordPath(r.ID)
 
 	f, err := os.CreateTemp(dir, ".forward-*")
