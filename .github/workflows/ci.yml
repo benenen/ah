@@ -32,14 +32,16 @@ jobs:
 
       - name: Check formatting
         run: |
-          unformatted=$(gofmt -l cmd internal)
+          unformatted=$(gofmt -l cmd internal e2e)
           if [ -n "$unformatted" ]; then
             printf 'gofmt would rewrite:\n%s\n' "$unformatted"
             exit 1
           fi
 
       - name: Vet
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet -tags e2e ./e2e/
 
       - name: Build
         run: go build ./...
@@ -61,6 +63,26 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+
+  # Drives the built binary against real OpenSSH in Docker (see e2e/): OpenSSH
+  # SFTP extensions, tcpip-forward/GatewayPorts and real sudo, which the
+  # in-process test server cannot reproduce. Linux only: macOS runners have no
+  # Docker daemon.
+  e2e:
+    name: e2e (docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: End-to-end tests
+        env:
+          AH_E2E_REQUIRE_DOCKER: "1"
+        run: make e2e
 
   # The CLI cross-compiles for platforms beyond macOS and Linux, where
   # interactive sessions, secret input and the forwarding daemon return an

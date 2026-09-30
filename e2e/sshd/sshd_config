@@ -1,0 +1,13 @@
+Port 22
+HostKey /etc/ssh/ssh_host_ed25519_key
+PubkeyAuthentication yes
+# tester logs in by key only; ops exercises saved password authentication.
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+Match User tester
+    PasswordAuthentication no
+Match all
+AllowTcpForwarding yes
+# Lets -R bind a client-specified address such as 0.0.0.0.
+GatewayPorts clientspecified
+Subsystem sftp /usr/lib/ssh/sftp-server

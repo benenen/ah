@@ -312,12 +312,15 @@ make run ARGS="c A"         # 构建并连接 A
 make fmt                   # 格式化
 make check                 # 构建、静态检查和全部测试
 make test-race             # 竞态检测
+make e2e                   # Docker 中真实 OpenSSH 端到端测试
 make clean                 # 清理构建产物
 ```
 
 也可以直接使用 `go build -o bin/ah ./cmd/ah`、`go install ./cmd/ah`、`go test ./...` 等 Go 命令。
 
 测试启动本地 SSH/SFTP 服务，使用临时密钥和配置；Bash/Zsh/Fish 测试在隔离的伪终端中实际按 Tab 并复制含特殊字符的文件。缺少对应 shell 时跳过该 shell 测试。
+
+`make e2e` 需要 Docker：用 `e2e/sshd` 构建一个真实 OpenSSH（Alpine）镜像，另起一台只在 Docker 内网可达的 Web 服务，再用编译出的 `ah` 按顺序跑完整场景——首次连接指纹确认（拒绝/接受/密钥变化）、远程命令的输出流与退出码、交互 shell、保存密码登录、单文件与目录复制（含权限、中文路径、符号链接跳过、合并、`--backup` 保留份数与还原、内容相同跳过、远端互传）、历史查询与重跑、`-L`/`-D`/`-R` 转发（含 `GatewayPorts`、日志、kill/start/restart、`rm --all`）、免密与带密码的 sudo 及 root 复制。交互提示用伪终端驱动。每次运行使用独立的临时 HOME、配置、known_hosts、主密钥和历史，结束时删除容器与网络，只保留 `ah-e2e-sshd` 镜像作构建缓存。镜像里的密码和运行时注入的密钥都是一次性的测试数据。未安装 Docker 或守护进程不可用时测试跳过；普通 `go test ./...` 不会运行它（`e2e` 构建标签）。
 
 设计和开发约定见 [AGENTS.md](AGENTS.md)。依赖接口参考 [Cobra 补全文档](https://cobra.dev/docs/how-to-guides/shell-completion/)、[SFTP API](https://pkg.go.dev/github.com/pkg/sftp)、[SSH API](https://pkg.go.dev/golang.org/x/crypto/ssh) 和 [TOML API](https://pkg.go.dev/github.com/pelletier/go-toml/v2)。
 

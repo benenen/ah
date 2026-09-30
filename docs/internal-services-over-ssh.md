@@ -98,6 +98,8 @@ Host tunnels
 
 ## 复现这个环境
 
+仓库的 `make e2e` 已把其中的 HTTP 场景（以及 `-D`/`-R`）自动化，每次改动后可直接跑；下面的手工步骤用于再验证 MySQL、Redis 等真实客户端。
+
 下面这套在 macOS + Docker 上验证过：三个目标服务都不发布端口，只挂在 docker 内网，只能经隧道到达。实测结果：MySQL 查询、Redis 读写、HTTP 取到页面均为正常响应。
 
 ```sh

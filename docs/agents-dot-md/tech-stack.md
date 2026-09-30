@@ -22,7 +22,9 @@ go vet ./...
 go test -race ./...
 ```
 
-测试使用本地受控 SSH/SFTP 服务、临时密钥及真实 Bash/Zsh PTY，不连接业务主机。shell 不存在时相关测试明确跳过。交互 SSH 支持 macOS/Linux，其他平台返回明确的不支持错误。
+测试使用本地受控 SSH/SFTP 服务、临时密钥及真实 Bash/Zsh PTY，不连接业务主机。shell 不存在时相关测试明确跳过。
+
+`make e2e`（`go test -tags e2e ./e2e/`）在 Docker 中起真实 OpenSSH（`e2e/sshd`，Alpine）和仅内网可达的 Web 服务，用编译出的二进制按顺序跑连接、复制、历史、转发、sudo 全流程，提示经 creack/pty 驱动。它覆盖测试用假 SSH 服务器测不到的行为：OpenSSH 的 hardlink/posix-rename 扩展、tcpip-forward 与 GatewayPorts、真实 sudo 与 sftp-server 探测、主机密钥变化。改动 SSH、复制、转发或 sudo 链路后应运行；无 Docker 时跳过并须如实报告未执行。CI 的 e2e 任务在 ubuntu 上运行它并设 `AH_E2E_REQUIRE_DOCKER=1`，缺 Docker 时判失败而不是跳过。交互 SSH 支持 macOS/Linux，其他平台返回明确的不支持错误。
 
 `.github/workflows/ci.yml` 在 ubuntu 与 macOS 上跑同一组命令（gofmt 检查、vet、build、test、race），Linux 额外校验 go.mod/go.sum 已 tidy。终端与守护进程有独立的 darwin/linux 分支，因此两个平台都不能省。补全用例按 shell 查找结果跳过，CI 在 Linux 额外安装 zsh/fish，否则 Ubuntu 只会覆盖 bash。macOS runner 上没有 fish，fish 补全只在 Linux 覆盖。
 
