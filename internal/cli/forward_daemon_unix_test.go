@@ -46,6 +46,9 @@ func buildAh(t *testing.T, dir string) string {
 
 func TestForwardDaemonLifecycle(t *testing.T) {
 	dir := t.TempDir()
+	// Build before HOME moves: default Go caches live under HOME, and a module
+	// cache inside the temp dir is read-only and breaks its cleanup.
+	binary := buildAh(t, dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	// On macOS os.UserConfigDir uses HOME.
 	t.Setenv("HOME", dir)
@@ -70,7 +73,6 @@ func TestForwardDaemonLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	binary := buildAh(t, dir)
 	run := func(args ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -283,6 +285,9 @@ func TestForwardDaemonLifecycle(t *testing.T) {
 
 func TestForwardDaemonDynamicAndRemote(t *testing.T) {
 	dir := t.TempDir()
+	// Build before HOME moves: default Go caches live under HOME, and a module
+	// cache inside the temp dir is read-only and breaks its cleanup.
+	binary := buildAh(t, dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
 	t.Setenv("SSH_AUTH_SOCK", "")
@@ -316,7 +321,6 @@ func TestForwardDaemonDynamicAndRemote(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	binary := buildAh(t, dir)
 	run := func(args ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
