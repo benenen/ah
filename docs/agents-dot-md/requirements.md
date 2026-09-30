@@ -26,7 +26,7 @@
 | `ah completion <shell>` | 输出 shell 补全脚本，首批覆盖 Bash、Zsh、Fish |
 | `ah version` / `ah v` | 输出版本、commit、构建时间与运行平台；版本由构建时注入，源码构建显示 dev |
 
-`connect`、`completion`、`version` 是配套命令约定。目录递归复制、SSH 跳板机、断点续传暂不列入已确定范围。遇到已有目标文件时默认报错；显式覆盖选项为 `--force` / `-f`。
+`connect`、`completion`、`version` 是配套命令约定。SSH 跳板机、断点续传暂不列入已确定范围。遇到已有目标文件时默认报错；显式覆盖选项为 `--force` / `-f`。
 
 ## 配置
 
@@ -54,6 +54,9 @@ user = "bob"
 - A 到 B 的内容经运行 ah 的本机流式中转，使用两个 SSH/SFTP 会话；无需 A 能直连 B，不把整个文件读入内存。
 - 处理连接失败、权限不足、路径不存在、中途断线、取消、写入及关闭错误；失败返回非零退出码，不把部分文件报告为成功。
 - 以同目录临时文件暂存；远端默认使用 hardlink@openssh.com 原子发布，--force 使用 posix-rename@openssh.com；本地使用 os.Link/os.Rename。服务端不支持对应扩展时失败；覆盖前保护原目标。失败尽力清理，连接中断时在错误中报告可能残留的临时文件。
+- `cp -r`：按 cp -r 解析目标（已有目录则落到 目标/源名，否则新建）；落点已存在时无 -f 在写入前报错，-f 合并（同名文件逐个原子替换，多余文件保留）；文件/目录类型冲突报错；同一文件系统禁止复制进自身。符号链接与特殊文件跳过并在 stderr 报告。目录先以 0700 建立，结束后自深向浅设源权限位，合并时不改已有目录权限。树整体非原子，失败保留已复制文件。本地目标逐个文件检查历史库保护。
+- `--backup [--backup-keep N]`（默认 5，1–1000）：替换已有普通文件前，将其硬链接为同目录 `bak.NAME.bak-<UTC 纳秒时间戳>`，此前按时间删除最旧的同名备份使总数不超过 N；只识别严格匹配该格式的文件。隐含覆盖（用于目录时隐含合并）；远端需 hardlink@openssh.com。
+- 替换模式（-f/--backup）下，目标为普通文件且大小、权限位、内容均与源相同时跳过：不替换、不备份，计为 unchanged 并在输出中报告；进度按已完成计。
 - `ah cp <Tab>` 可补全连接别名；`ah cp A:/dir/<Tab>` 查询 A 的目录；第二个参数按 B 的连接独立补全。
 - 目录候选追加 `/`，正确处理空格、中文及 shell 特殊字符；使用 SFTP 列目录，不拼接远程 shell 命令。
 - 远程路径按 POSIX 语义处理；`~` 使用 SFTP Getwd 返回的登录目录显式展开；拒绝 `~user`。
@@ -68,9 +71,9 @@ user = "bob"
 ## 复制历史契约
 
 默认 os.UserConfigDir()/ah/history.db，可用 --history-file 覆盖；SQLite 文件 0600。
-传输前持久化 running，完成后更新 success/failed/canceled，保存路径、cwd、配置路径、时间、字节数、force 和错误，不记录密码或密钥内容。不能持久化时不开始传输；崩溃可能保留 running。本地目标不得覆盖当前历史库及 sidecar。
+传输前持久化 running，完成后更新 success/failed/canceled，保存路径、cwd、配置路径、时间、字节数、force、recursive、backup_keep 和错误（旧库打开时自动补列，旧记录视为非递归、无备份），不记录密码或密钥内容。不能持久化时不开始传输；崩溃可能保留 running。本地目标不得覆盖当前历史库及 sidecar。
 `history [关键词...]` / `history search` 大小写不敏感、多关键词 AND 子串搜索，--limit 默认 20。
-`history show ID` 输出安全引用且保留原工作目录的命令；`history run ID` 使用结构化参数重跑并另记历史，不执行 shell 文本。保留原 cwd/force/配置路径，使用当前连接定义，显式全局配置选项可覆盖记录路径。
+`history show ID` 输出安全引用且保留原工作目录的命令；`history run ID` 使用结构化参数重跑并另记历史，不执行 shell 文本。保留原 cwd/force/recursive/backup_keep/配置路径，使用当前连接定义，显式全局配置选项可覆盖记录路径。
 
 ## 远程命令契约
 

@@ -17,26 +17,42 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// copyMode holds the options that change what a copy writes; history stores
+// them so a rerun behaves the same.
+type copyMode struct {
+	Force, Recursive bool
+	BackupKeep       int // 0 disables backups
+}
+
 func (a *app) copyCommand() *cobra.Command {
-	var force bool
-	cmd := &cobra.Command{Use: "copy SOURCE DESTINATION", Aliases: []string{"cp"}, Short: "Copy a local or NAME:PATH remote file and record its history", Args: cobra.ExactArgs(2), ValidArgsFunction: a.completeRemote, RunE: func(cmd *cobra.Command, args []string) error {
+	var mode copyMode
+	var backup bool
+	cmd := &cobra.Command{Use: "copy SOURCE DESTINATION", Aliases: []string{"cp"}, Short: "Copy a local or NAME:PATH remote file or directory and record its history", Args: cobra.ExactArgs(2), ValidArgsFunction: a.completeRemote, RunE: func(cmd *cobra.Command, args []string) error {
+		if !backup {
+			mode.BackupKeep = 0
+		} else if mode.BackupKeep < 1 || mode.BackupKeep > 1000 {
+			return fmt.Errorf("--backup-keep must be between 1 and 1000")
+		}
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		return a.copyWithHistory(cmd, args[0], args[1], force, cwd)
+		return a.copyWithHistory(cmd, args[0], args[1], mode, cwd)
 	}}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "atomically replace an existing destination file")
+	cmd.Flags().BoolVarP(&mode.Force, "force", "f", false, "atomically replace existing destination files; with -r, merge into an existing directory")
+	cmd.Flags().BoolVarP(&mode.Recursive, "recursive", "r", false, "copy a directory tree (symbolic links and special files are skipped)")
+	cmd.Flags().BoolVar(&backup, "backup", false, "before replacing a file, keep the old one as bak.NAME.bak-TIMESTAMP beside it (implies --force)")
+	cmd.Flags().IntVar(&mode.BackupKeep, "backup-keep", 5, "with --backup, keep at most this many backups per file, deleting the oldest")
 	return cmd
 }
 
-func (a *app) copyWithHistory(cmd *cobra.Command, source, target string, force bool, cwd string) (err error) {
+func (a *app) copyWithHistory(cmd *cobra.Command, source, target string, mode copyMode, cwd string) (err error) {
 	store, err := a.openHistory()
 	if err != nil {
 		return fmt.Errorf("open copy history (copy not started): %w", err)
 	}
 	defer func() { err = errors.Join(err, store.Close()) }()
-	record, err := a.copyRecord(source, target, force, cwd)
+	record, err := a.copyRecord(source, target, mode, cwd)
 	if err != nil {
 		return err
 	}
@@ -47,6 +63,8 @@ func (a *app) copyWithHistory(cmd *cobra.Command, source, target string, force b
 		return fmt.Errorf("record copy history (copy not started): %w", err)
 	}
 	var n int64
+	var tree *transfer.TreeResult
+	var unchanged bool
 	defer func() {
 		if err != nil && cmd.Context().Err() != nil {
 			err = errors.Join(err, cmd.Context().Err())
@@ -67,43 +85,84 @@ func (a *app) copyWithHistory(cmd *cobra.Command, source, target string, force b
 		}
 		if err != nil {
 			err = fmt.Errorf("copy history #%d: %w", id, err)
+		} else if tree != nil {
+			summary := fmt.Sprintf("Copied %d files, %d bytes", tree.Files, n)
+			if tree.Unchanged > 0 {
+				summary += fmt.Sprintf(", %d unchanged", tree.Unchanged)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s -> %s (history #%d)\n", summary, source, target, id)
+		} else if unchanged {
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Unchanged (identical content): %s -> %s (history #%d)\n", source, target, id)
 		} else {
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Copied %d bytes: %s -> %s (history #%d)\n", n, source, target, id)
 		}
 	}()
-	n, err = a.performCopy(cmd, source, target, force, cwd)
-	if err != nil {
-		return err
-	}
-	return nil
+	n, tree, unchanged, err = a.performCopy(cmd, source, target, mode, cwd)
+	return err
 }
 
-func (a *app) performCopy(cmd *cobra.Command, source, target string, force bool, cwd string) (int64, error) {
+// performCopy returns a tree summary only for recursive copies, and reports
+// whether a single file was left alone because it already matched.
+func (a *app) performCopy(cmd *cobra.Command, source, target string, mode copyMode, cwd string) (int64, *transfer.TreeResult, bool, error) {
 	src, err := resolveCopyEndpoint(source, cwd)
 	if err != nil {
-		return 0, err
+		return 0, nil, false, err
 	}
 	dst, err := resolveCopyEndpoint(target, cwd)
 	if err != nil {
-		return 0, err
+		return 0, nil, false, err
 	}
 	if err := a.protectHistoryDestination(src, dst); err != nil {
-		return 0, err
+		return 0, nil, false, err
 	}
 	sourceClient, closeSource, err := a.openCopyEndpoint(cmd, src, cwd)
 	if err != nil {
-		return 0, fmt.Errorf("source: %w", err)
+		return 0, nil, false, fmt.Errorf("source: %w", err)
 	}
 	defer closeSource()
 	targetClient, closeTarget, err := a.openCopyEndpoint(cmd, dst, cwd)
 	if err != nil {
-		return 0, fmt.Errorf("destination: %w", err)
+		return 0, nil, false, fmt.Errorf("destination: %w", err)
 	}
 	defer closeTarget()
 	bar := newProgressBar(cmd.ErrOrStderr())
-	n, err := transfer.Copy(cmd.Context(), sourceClient, targetClient, src.Path, dst.Path, force, bar.update)
+	options := transfer.Options{Force: mode.Force, BackupKeep: mode.BackupKeep, Progress: bar.update}
+	if !mode.Recursive {
+		unchanged := false
+		options.Unchanged = func(string) { unchanged = true }
+		n, err := transfer.Copy(cmd.Context(), sourceClient, targetClient, src.Path, dst.Path, options)
+		bar.finish()
+		return n, nil, unchanged, err
+	}
+	tree := transfer.TreeOptions{
+		Options: options,
+		// Two endpoints on one connection name share a filesystem.
+		SameFilesystem: src.Name == dst.Name,
+		Skipped: func(p string, m os.FileMode) {
+			bar.finish()
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Skipped %s (%s)\n", p, skippedKind(m))
+		},
+	}
+	if dst.Name == "" {
+		tree.CheckTarget = a.protectHistoryPath
+	}
+	result, err := transfer.CopyTree(cmd.Context(), sourceClient, targetClient, src.Path, dst.Path, tree)
 	bar.finish()
-	return n, err
+	return result.Bytes, &result, false, err
+}
+
+func skippedKind(m os.FileMode) string {
+	switch {
+	case m&os.ModeSymlink != 0:
+		return "symbolic link"
+	case m&os.ModeNamedPipe != 0:
+		return "named pipe"
+	case m&os.ModeSocket != 0:
+		return "socket"
+	case m&os.ModeDevice != 0:
+		return "device"
+	}
+	return "special file"
 }
 
 func resolveCopyEndpoint(value, cwd string) (transfer.Endpoint, error) {
@@ -143,8 +202,8 @@ func (a *app) openCopyEndpoint(cmd *cobra.Command, e transfer.Endpoint, cwd stri
 	return files, func() { _ = files.Close(); _ = client.Close() }, nil
 }
 
-func (a *app) copyRecord(source, target string, force bool, cwd string) (history.Record, error) {
-	record := history.Record{Source: source, Destination: target, Force: force, Cwd: cwd}
+func (a *app) copyRecord(source, target string, mode copyMode, cwd string) (history.Record, error) {
+	record := history.Record{Source: source, Destination: target, Force: mode.Force, Recursive: mode.Recursive, BackupKeep: mode.BackupKeep, Cwd: cwd}
 	store, err := a.store()
 	if err != nil {
 		return record, err
@@ -186,6 +245,12 @@ func (a *app) protectHistoryDestination(src, dst transfer.Endpoint) error {
 		}
 		target = filepath.Join(target, base)
 	}
+	return a.protectHistoryPath(target)
+}
+
+// protectHistoryPath rejects a local destination file that is the active
+// history database or one of its SQLite sidecars.
+func (a *app) protectHistoryPath(target string) error {
 	target, err := canonicalPasswordPath(target)
 	if err != nil {
 		return err

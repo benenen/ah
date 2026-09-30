@@ -34,7 +34,7 @@ func TestPersistenceAndLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now().UTC().Add(-time.Minute)
-	want := Record{Source: "a:/source", Destination: "b:/dest", Cwd: "/cwd", ConfigPath: "/config", KnownHosts: "/hosts", KeyPath: "/key", Force: true, StartedAt: start}
+	want := Record{Source: "a:/source", Destination: "b:/dest", Cwd: "/cwd", ConfigPath: "/config", KnownHosts: "/hosts", KeyPath: "/key", Force: true, Recursive: true, BackupKeep: 3, StartedAt: start}
 	id, err := s.Begin(ctx, want)
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestPersistenceAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Status != "running" || !r.FinishedAt.IsZero() || !r.StartedAt.Equal(start) || r.Source != want.Source || r.Destination != want.Destination || r.Cwd != want.Cwd || r.ConfigPath != want.ConfigPath || r.KnownHosts != want.KnownHosts || r.KeyPath != want.KeyPath || !r.Force {
+	if r.Status != "running" || !r.FinishedAt.IsZero() || !r.StartedAt.Equal(start) || r.Source != want.Source || r.Destination != want.Destination || r.Cwd != want.Cwd || r.ConfigPath != want.ConfigPath || r.KnownHosts != want.KnownHosts || r.KeyPath != want.KeyPath || !r.Force || !r.Recursive || r.BackupKeep != 3 {
 		t.Fatalf("unexpected record: %+v", r)
 	}
 	for _, status := range []string{"success", "failed", "canceled"} {
@@ -252,5 +252,42 @@ func TestExistingFilePermissionsAreRestricted(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("database permissions %o", info.Mode().Perm())
+	}
+}
+
+func TestUpgradesOldSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The schema before recursive copies and backups.
+	_, err = db.Exec(`CREATE TABLE copy_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		source TEXT NOT NULL, destination TEXT NOT NULL, cwd TEXT NOT NULL,
+		config_path TEXT NOT NULL, known_hosts TEXT NOT NULL, key_path TEXT NOT NULL,
+		force INTEGER NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER,
+		status TEXT NOT NULL CHECK(status IN ('running','success','failed','canceled')),
+		bytes INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
+		search_paths TEXT NOT NULL, search_error TEXT NOT NULL DEFAULT ''
+	);
+	INSERT INTO copy_history (source,destination,cwd,config_path,known_hosts,key_path,force,started_at,status,search_paths)
+	VALUES ('old','dest','/','/c','/k','/m',1,1,'success','old')`)
+	if err = errors.Join(err, db.Close()); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // reopening an upgraded database is a no-op
+		s := openTestStore(t, path)
+		r, err := s.Get(context.Background(), 1)
+		if err != nil || r.Source != "old" || !r.Force || r.Recursive || r.BackupKeep != 0 {
+			t.Fatalf("old row: %+v %v", r, err)
+		}
+		id, err := s.Begin(context.Background(), Record{Source: "new", Recursive: true, BackupKeep: 5})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r, err := s.Get(context.Background(), id); err != nil || !r.Recursive || r.BackupKeep != 5 {
+			t.Fatalf("new row: %+v %v", r, err)
+		}
 	}
 }

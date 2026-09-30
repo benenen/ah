@@ -19,7 +19,8 @@ import (
 type Record struct {
 	ID                                                        int64
 	Source, Destination, Cwd, ConfigPath, KnownHosts, KeyPath string
-	Force                                                     bool
+	Force, Recursive                                          bool
+	BackupKeep                                                int
 	StartedAt, FinishedAt                                     time.Time
 	Status                                                    string
 	Bytes                                                     int64
@@ -69,12 +70,45 @@ func Open(path string) (*Store, error) {
 		force INTEGER NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER,
 		status TEXT NOT NULL CHECK(status IN ('running','success','failed','canceled')),
 		bytes INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
-		search_paths TEXT NOT NULL, search_error TEXT NOT NULL DEFAULT ''
+		search_paths TEXT NOT NULL, search_error TEXT NOT NULL DEFAULT '',
+		recursive INTEGER NOT NULL DEFAULT 0, backup_keep INTEGER NOT NULL DEFAULT 0
 	)`)
+	if err == nil {
+		err = addColumns(db)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("initialize history database: %w", errors.Join(err, db.Close()))
 	}
 	return &Store{db: db}, nil
+}
+
+// addColumns upgrades databases created before recursive copies and backups;
+// old rows default to a plain, backup-free copy.
+func addColumns(db *sql.DB) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('copy_history')`)
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return errors.Join(err, rows.Close())
+		}
+		have[name] = true
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, column := range []string{"recursive", "backup_keep"} {
+		if !have[column] {
+			// Concurrent openers may race to add the column; losing is harmless.
+			if _, err := db.Exec(`ALTER TABLE copy_history ADD COLUMN ` + column + ` INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -85,8 +119,8 @@ func (s *Store) Begin(ctx context.Context, r Record) (int64, error) {
 		r.StartedAt = time.Now().UTC()
 	}
 	result, err := s.db.ExecContext(ctx, `INSERT INTO copy_history
-		(source,destination,cwd,config_path,known_hosts,key_path,force,started_at,status,search_paths)
-		VALUES (?,?,?,?,?,?,?,?,'running',?)`, r.Source, r.Destination, r.Cwd, r.ConfigPath, r.KnownHosts, r.KeyPath, r.Force, r.StartedAt.UnixNano(), strings.ToLower(r.Source+"\n"+r.Destination))
+		(source,destination,cwd,config_path,known_hosts,key_path,force,recursive,backup_keep,started_at,status,search_paths)
+		VALUES (?,?,?,?,?,?,?,?,?,?,'running',?)`, r.Source, r.Destination, r.Cwd, r.ConfigPath, r.KnownHosts, r.KeyPath, r.Force, r.Recursive, r.BackupKeep, r.StartedAt.UnixNano(), strings.ToLower(r.Source+"\n"+r.Destination))
 	if err != nil {
 		return 0, fmt.Errorf("record copy attempt: %w", err)
 	}
@@ -120,13 +154,13 @@ func (s *Store) Finish(ctx context.Context, id int64, bytes int64, status, error
 	return nil
 }
 
-const recordColumns = `id,source,destination,cwd,config_path,known_hosts,key_path,force,started_at,finished_at,status,bytes,error`
+const recordColumns = `id,source,destination,cwd,config_path,known_hosts,key_path,force,recursive,backup_keep,started_at,finished_at,status,bytes,error`
 
 func scanRecord(row interface{ Scan(...any) error }) (Record, error) {
 	var r Record
 	var started int64
 	var finished sql.NullInt64
-	err := row.Scan(&r.ID, &r.Source, &r.Destination, &r.Cwd, &r.ConfigPath, &r.KnownHosts, &r.KeyPath, &r.Force, &started, &finished, &r.Status, &r.Bytes, &r.Error)
+	err := row.Scan(&r.ID, &r.Source, &r.Destination, &r.Cwd, &r.ConfigPath, &r.KnownHosts, &r.KeyPath, &r.Force, &r.Recursive, &r.BackupKeep, &started, &finished, &r.Status, &r.Bytes, &r.Error)
 	if err != nil {
 		return Record{}, err
 	}

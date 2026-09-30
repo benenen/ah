@@ -206,6 +206,8 @@ ah cp ./report.csv ./backup.csv   # 本地复制
 ah cp A:/var/data/report.csv B:/home/bob/report.csv
 ah cp 'A:~/reports/季度 报告.csv' B:~/uploads/
 ah cp --force A:~/report.csv B:~/report.csv
+ah cp -r ./site nas:/var/www/     # 复制目录
+ah cp --backup ./app.conf nas:/etc/app/  # 覆盖前备份旧文件
 ```
 
 没有 `NAME:` 前缀的路径表示本地文件，相对路径按执行目录解析；文件名含冒号时可使用 `./name:part` 避免被识别为连接别名。本地 `~` 表示本机用户目录。远端到远端时，两端分别建立 SSH/SFTP 连接，文件流经运行 ah 的机器，无需 A 能直接连接 B。目标为已有目录时使用源文件名；目标父目录须已存在。远端 `~` 表示该连接的 SFTP 登录目录；不支持 `~otheruser`。
@@ -214,7 +216,31 @@ ah cp --force A:~/report.csv B:~/report.csv
 
 复制失败不报告成功；能连通时清理临时文件。断线或取消导致无法清理时，错误会指出可能残留的 `.ah-copy-*` 路径。传输完成但发布响应丢失时，目标可能已经存在，应检查目标后再重试。
 
-当前支持单个普通文件；目录递归、跳板机和断点续传尚未实现。
+支持普通文件和目录（`-r`）；跳板机和断点续传尚未实现。
+
+### 目录复制
+
+```sh
+ah cp -r ./site nas:/var/www/          # 得到 /var/www/site
+ah cp -r ./site nas:/var/www/site-new  # site-new 不存在时即为 site 的副本
+ah cp -r -f ./site nas:/var/www/       # 已有 /var/www/site 时合并
+```
+
+`-r` / `--recursive` 按 `cp -r` 规则复制目录：目标为已有目录时复制到“目标/源目录名”，目标不存在时新建为源目录的副本（父目录须已存在）。最终落点已存在时，不加 `-f` 会在写入任何文件前报错；加 `-f` 则合并进去，同名文件逐个原子替换，目标中多余的文件保留不删。同名位置一边是文件、一边是目录时报错。不能把目录复制进它自己里面。
+符号链接和设备、管道等特殊文件跳过不复制，逐个在 stderr 打印 `Skipped`。目录按源权限位设置（先以可写权限建立，文件复制完后再恢复）；合并时已有目录的权限不变。
+每个文件单独原子发布，但整棵树不是原子的：中途失败时已复制的文件保留，确认后加 `-f` 重跑即可合并补齐。进度条按全部文件总字节显示。
+
+### 覆盖前备份
+
+```sh
+ah cp --backup ./config.toml nas:/etc/app/          # 保留最近 5 份
+ah cp --backup --backup-keep 10 ./config.toml nas:/etc/app/
+ah cp -r --backup ./site nas:/var/www/              # 目录合并时逐个文件备份
+```
+
+`--backup` 在替换已有目标文件前，先把旧文件硬链接为同目录下的 `bak.原文件名.bak-UTC时间戳`（如 `bak.config.toml.bak-20260930T123456.123456789Z`），再原子替换；目标不存在时不产生备份。`--backup` 隐含覆盖，不需要再加 `-f`，用于目录时也隐含合并。
+备份前先按时间删除该文件最旧的备份，使备份数不超过 `--backup-keep`（默认 5，范围 1–1000）；只清理名称完全符合 `bak.原文件名.bak-时间戳` 格式的文件。还原时把想要的版本改回原名即可，例如 `ah c nas mv /etc/app/bak.config.toml.bak-20260930T123456.123456789Z /etc/app/config.toml`。远端备份要求 `hardlink@openssh.com`。
+替换已有文件时（`-f` 或 `--backup`），若目标与源大小、权限位和内容都完全相同，就跳过该文件：不替换、不备份，输出中计为 unchanged（单个文件打印 `Unchanged (identical content)`）。比较需要把目标完整读一遍，远端大文件会多花一次读取时间；只有权限位不同时仍会替换。
 
 ## 复制历史
 
@@ -226,11 +252,11 @@ ah history show 12             # 输出可复制的 shell 命令
 ah history run 12              # 重跑，生成新的历史记录
 ```
 
-历史默认保存在 `os.UserConfigDir()/ah/history.db`，可用全局 `--history-file /path/history.db` 覆盖。SQLite 文件权限为 0600，记录源/目标、执行目录、配置路径、开始/结束时间、字节数、覆盖选项、状态与错误；不保存密码或密钥内容。查询支持路径、状态和错误的关键词子串匹配。
+历史默认保存在 `os.UserConfigDir()/ah/history.db`，可用全局 `--history-file /path/history.db` 覆盖。SQLite 文件权限为 0600，记录源/目标、执行目录、配置路径、开始/结束时间、字节数、覆盖/递归/备份选项、状态与错误；不保存密码或密钥内容。查询支持路径、状态和错误的关键词子串匹配。
 
 每次参数数量正确的 `cp` 在传输前记为 `running`，结束后更新为 `success`、`failed` 或 `canceled`；进程被强制终止时可能保留 `running`。无法打开或写入历史时不会开始复制。本地目标不能覆盖当前历史数据库及其 SQLite 辅助文件。
 
-重跑沿用原来的工作目录、覆盖选项和配置/主密钥/known_hosts 路径，连接定义使用该配置文件中的当前值；可通过全局选项显式覆盖配置路径。`history run` 直接调用复制逻辑，不执行数据库中的 shell 文本。原记录未使用 `--force` 时，重跑也会拒绝覆盖已有目标。首次主机信任授权不会保存在历史中。
+重跑沿用原来的工作目录、覆盖/递归/备份选项和配置/主密钥/known_hosts 路径，连接定义使用该配置文件中的当前值；可通过全局选项显式覆盖配置路径。`history run` 直接调用复制逻辑，不执行数据库中的 shell 文本。原记录未使用 `--force` 时，重跑也会拒绝覆盖已有目标。首次主机信任授权不会保存在历史中。
 
 ## Tab 补全
 

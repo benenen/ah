@@ -317,3 +317,109 @@ func TestHistoryCleanFilters(t *testing.T) {
 		})
 	}
 }
+
+func TestRecursiveCopyWithBackupAndReplay(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	server := testutil.StartSSH(t)
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	if err := (config.Store{Path: configPath}).Update(context.Background(), func(m map[string]config.Connection) error {
+		m["nas"] = server.Connection
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (string, error) {
+		flags := []string{"--config", configPath, "--history-file", filepath.Join(dir, "history.db"), "--known-hosts", server.KnownHosts}
+		return execute(t, append(flags, args...)...)
+	}
+	tree := filepath.Join(dir, "site")
+	if err := os.MkdirAll(filepath.Join(tree, "css"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"index.html": "v1", "css/app.css": "body{}"} {
+		if err := os.WriteFile(filepath.Join(tree, filepath.FromSlash(name)), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("index.html", filepath.Join(tree, "home.html")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run("cp", "-r", tree, "nas:~/site")
+	if err != nil || !strings.Contains(out, "Copied 2 files, 8 bytes") || !strings.Contains(out, "Skipped "+filepath.Join(tree, "home.html")+" (symbolic link)") {
+		t.Fatalf("upload: %s %v", out, err)
+	}
+	remote := filepath.Join(server.Root, "site")
+	if data, err := os.ReadFile(filepath.Join(remote, "css", "app.css")); err != nil || string(data) != "body{}" {
+		t.Fatalf("remote tree: %q %v", data, err)
+	}
+	download := filepath.Join(dir, "download")
+	if out, err := run("cp", "-r", "nas:~/site", download); err != nil {
+		t.Fatalf("download: %s %v", out, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(download, "index.html")); err != nil || string(data) != "v1" {
+		t.Fatalf("download: %q %v", data, err)
+	}
+	if _, err := run("cp", tree, "nas:~/other"); err == nil {
+		t.Fatal("copied a directory without -r")
+	}
+	// Like cp -r, an existing directory target receives target/BASE, so nas:~
+	// addresses the existing ~/site.
+	if _, err := run("cp", "-r", tree, "nas:~"); err == nil {
+		t.Fatal("merged into an existing tree without --force")
+	}
+	if _, err := run("cp", "-r", "--backup", "--backup-keep", "0", tree, "nas:~"); err == nil {
+		t.Fatal("accepted --backup-keep 0")
+	}
+
+	backups := func() []string {
+		t.Helper()
+		matches, err := filepath.Glob(filepath.Join(remote, "bak.index.html.bak-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return matches
+	}
+	if err := os.WriteFile(filepath.Join(tree, "index.html"), []byte("v2"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err = run("cp", "-r", "--backup", "--backup-keep", "1", tree, "nas:~")
+	if err != nil || !strings.Contains(out, "Copied 1 files, 2 bytes, 1 unchanged") {
+		t.Fatalf("backup merge: %s %v", out, err)
+	}
+	// The untouched stylesheet is neither replaced nor backed up.
+	if matches, _ := filepath.Glob(filepath.Join(remote, "css", "bak.*")); len(matches) != 0 {
+		t.Fatalf("backed up an unchanged file: %v", matches)
+	}
+	_, idText, _ := strings.Cut(out, "(history #")
+	id := strings.TrimSuffix(strings.TrimSpace(idText), ")")
+	if data, _ := os.ReadFile(filepath.Join(remote, "index.html")); string(data) != "v2" {
+		t.Fatalf("not replaced: %q", data)
+	}
+	if b := backups(); len(b) != 1 {
+		t.Fatalf("backups %v", b)
+	} else if data, _ := os.ReadFile(b[0]); string(data) != "v1" {
+		t.Fatalf("backup holds %q", data)
+	}
+
+	// show and run carry the recursive and backup settings.
+	shown, err := run("history", "show", id)
+	if err != nil || !strings.Contains(shown, "'--recursive'") || !strings.Contains(shown, "'--backup' '--backup-keep' '1'") {
+		t.Fatalf("show: %s %v", shown, err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "index.html"), []byte("v3"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	if out, err := run("history", "run", id); err != nil {
+		t.Fatalf("replay: %s %v", out, err)
+	}
+	if out, err := run("cp", "--backup", filepath.Join(tree, "index.html"), "nas:~/site/"); err != nil || !strings.Contains(out, "Unchanged (identical content)") {
+		t.Fatalf("identical single file: %s %v", out, err)
+	}
+	if b := backups(); len(b) != 1 {
+		t.Fatalf("keep 1 left %v", b)
+	} else if data, _ := os.ReadFile(b[0]); string(data) != "v2" {
+		t.Fatalf("newest backup holds %q", data)
+	}
+}

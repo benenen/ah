@@ -108,7 +108,7 @@ func (a *app) historyCommand() *cobra.Command {
 			record.Force = force
 		}
 		// Structured invocation, never shell evaluation of data from SQLite.
-		return replay.copyWithHistory(cmd, record.Source, record.Destination, record.Force, record.Cwd)
+		return replay.copyWithHistory(cmd, record.Source, record.Destination, copyMode{Force: record.Force, Recursive: record.Recursive, BackupKeep: record.BackupKeep}, record.Cwd)
 	}}
 	run.Flags().BoolVarP(&force, "force", "f", false, "override recorded overwrite behavior (use --force=false to prevent replacement)")
 	cmd.AddCommand(run)
@@ -157,6 +157,12 @@ func historyShellCommand(r history.Record, historyPath string) (string, error) {
 	args = append(args, "cp")
 	if r.Force {
 		args = append(args, "--force")
+	}
+	if r.Recursive {
+		args = append(args, "--recursive")
+	}
+	if r.BackupKeep > 0 {
+		args = append(args, "--backup", "--backup-keep", strconv.Itoa(r.BackupKeep))
 	}
 	args = append(args, "--", source, target)
 	for i := 1; i < len(args); i++ {
