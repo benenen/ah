@@ -106,6 +106,7 @@ ah forward rm --all -f
 启动会恢复记录的配置/密钥/known_hosts 路径、工作目录和超时，使用当前连接配置；显式全局选项可覆盖路径和超时。
 旧版记录未保存这些信息时使用当前默认值或显式选项。首次主机信任授权不会保存供重启复用。
 `ah forward rm ID` 删除已停止或失败的记录及日志；`ah forward rm -f ID` 先停止运行中或启动中的转发再删除。
+`ah forward rm` 也可写作 `ah forward remove`，与顶层 `ah remove`/`ah rm` 对应。
 `ah forward rm --all` 删除所有已停止或失败的记录，其余（运行中、启动中、stale、不可读）在 stderr 提示跳过；`ah forward rm --all -f` 逐条按 `-f` 语义全部删除，某条失败（如 stale 的控制通道不可达）时保留该记录、继续处理其余并以非零退出码结束。`--all` 不能与 ID 同时使用。
 记录不可读（JSON 损坏）时普通 `ah forward rm ID` 报错并提示 `--force`，只有 `ah forward rm -f ID` 会删除，且会在 stderr 警告该记录的控制通道不可知、其工作进程可能仍在监听；文件名不是合法 ID 的游离文件不属记录，需手工清理。
 控制通道不可达时不会强删或按 PID 杀进程；无法确认停止时保留记录并报错。生命周期操作按 ID 加锁，删除后保留锁文件。

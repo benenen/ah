@@ -49,7 +49,7 @@ func (a *app) captureForwardOptions(r *forward.Record) error {
 func (a *app) forwardRemoveCommand() *cobra.Command {
 	var force, all bool
 	cmd := &cobra.Command{
-		Use: "rm ID | --all", Short: "Remove a stopped forward; --force stops it first",
+		Use: "rm ID | --all", Aliases: []string{"remove"}, Short: "Remove a stopped forward; --force stops it first",
 		Long: "Remove a stopped or failed forward record and its log.\n\n" +
 			"--force stops a running or starting forward first and also deletes unreadable records.\n" +
 			"--all removes every stopped or failed forward and skips the rest; with --force it removes all of them.",

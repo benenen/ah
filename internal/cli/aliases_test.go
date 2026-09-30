@@ -33,6 +33,13 @@ func TestCommandAliasesAndHelp(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	rm, _, err := root.Find([]string{"forward", "rm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remove, _, err := root.Find([]string{"f", "remove"}); err != nil || remove != rm {
+		t.Fatal("forward remove did not resolve to forward rm", err)
+	}
 	// h is a command, while -h continues to request root help.
 	if out, err := execute(t, "-h"); err != nil || !strings.Contains(out, "Available Commands:") {
 		t.Fatal("root help flag changed", err)
