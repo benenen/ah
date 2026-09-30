@@ -27,7 +27,7 @@ ah 使用 Go 对 SSH client 做一层封装，提供 CLI 管理连接；连接�
 ## 技能整理与记忆沉淀
 
 - 项目技能使用 `skills/<name>/SKILL.md`；全局技能不复制进仓库。
-- 新增、删除或改名技能/模块，或修改技能描述后，运行 `bash docs/agents-dot-md/reindex.sh`。Git 仓库的技能索引只收录已跟踪文件。
+- 新增、删除或改名技能/模块，或修改技能描述后，运行 `python3 ~/.claude/skills/agents-dot-md/scripts/reindex.py .`。Git 仓库的技能索引只收录已跟踪文件。
 - 索引标记内的内容由脚本生成，不手工维护。
 - 可复用的项目经验写进对应模块，避免重复记录能从代码直接读取的事实；敏感信息只保留在仓库外的本地配置中。
 
@@ -44,3 +44,18 @@ ah 使用 Go 对 SSH client 做一层封装，提供 CLI 管理连接；连接�
 - [功能契约](docs/agents-dot-md/requirements.md) — 实现命令、TOML 配置、SFTP 复制或路径补全时读取；区分用户需求与初始约定。
 - [技术栈与验证](docs/agents-dot-md/tech-stack.md) — 引入依赖、实现 Go 代码或执行构建时读取。
 <!-- MODULES:END -->
+
+## 记忆记录（Memory）
+本仓库的记忆区是 `docs/memory/*.md`——**纯 Markdown，不依赖外部记忆服务，也不需要 LLM key**，你自己用读写文件的工具维护，检索时直接 `grep` / 读文件。
+
+- **何时记**：完成一次排查 / 根因分析 / 踩坑修复后，把「非显然、下次能省事」的结论写下来，别让下一个会话重新推导。
+- **记在哪**：按主题聚合到一个文件（如 `docs/memory/build-and-deploy.md`、`docs/memory/known-pitfalls.md`、`docs/memory/external-integrations.md`），不要一条一个文件。文件头两行必须是 `# 标题` 与 `> 一句话摘要`（否则进不了索引）。
+- **和记忆服务的分工**：本环境另有记忆服务（如 mem0）时，只和本仓库有关的结论写这里，随 git 共享给团队和其他机器；跨项目的个人偏好和本机环境事实（代理、凭据放在哪、本机工具版本）写记忆服务，没有记忆服务就不记，不要写进仓库。同一条事实只写一处。
+- **每条怎么写**：一行一条，**绝对日期**打头，写清「现象 → 原因 → 结论 / 做法」；能附证据就附（`文件:行`、命令、报错原文）。未验证的猜测标「待验证」。
+- **不记什么**：代码结构、git 历史、本文件或模块里已写过的内容；凭据 / 密钥只落未入库的本地文件（如 `dev-env.local.md`），**绝不**写进 `docs/memory/` 或任何入库文件。
+- 增删主题文件后在仓库根运行 `python3 ~/.claude/skills/agents-dot-md/scripts/reindex.py .` 重建下方《记忆索引》。与某个任务关联的结论，可按需另记到任务系统（如 `vikunja`）的评论里。
+
+## 🧠 记忆索引（docs/memory/，脚本生成）
+<!-- MEMORY:START -->
+- （暂无记忆条目，排查后按 AGENTS.md《记忆记录》的约定追加）
+<!-- MEMORY:END -->

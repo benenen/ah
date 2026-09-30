@@ -1,6 +1,6 @@
 # docs/agents-dot-md 模块索引
 
-> AGENTS.md 的细化模块目录（不会被 Claude Code 自动加载，按需查阅）。本文件由 `reindex.sh` 生成，勿手工编辑。
+> AGENTS.md 的细化模块目录（不会被 Claude Code 自动加载，按需查阅）。本文件由 agents-dot-md skill 的 `reindex.py` 生成，勿手工编辑。
 
 - [系统架构](architecture.md) — 调整包边界或 SSH/SFTP 调用链前读取；以下是当前职责划分。
 - [Go 代码检查清单](code-checklist.md) — 写或审 Go 代码时读取；按改动适用项验证。
