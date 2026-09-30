@@ -57,5 +57,5 @@ ah 使用 Go 对 SSH client 做一层封装，提供 CLI 管理连接；连接�
 
 ## 🧠 记忆索引（docs/memory/，脚本生成）
 <!-- MEMORY:START -->
-- （暂无记忆条目，排查后按 AGENTS.md《记忆记录》的约定追加）
+- [已知坑](docs/memory/known-pitfalls.md) — 测试与 CI 中不显然、容易复发的问题及做法。
 <!-- MEMORY:END -->
