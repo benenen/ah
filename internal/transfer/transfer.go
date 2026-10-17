@@ -110,6 +110,11 @@ type Options struct {
 	// Unchanged, when non-nil, receives each destination that was left alone
 	// because replacing it would not change it: same content and permissions.
 	Unchanged func(target string)
+
+	// protect names a backup that pruning must keep: the one being restored.
+	protect string
+	// savedAs, when non-nil, receives the name of the backup this copy made.
+	savedAs *string
 }
 
 func (o Options) replace() bool { return o.Force || o.BackupKeep > 0 }
@@ -259,8 +264,12 @@ func copyOrSkip(ctx context.Context, sourceFS, targetFS filesystem, source, targ
 		return n, err
 	}
 	if opts.BackupKeep > 0 {
-		if err = targetFS.backup(target, opts.BackupKeep); err != nil {
+		saved, err := targetFS.backup(target, opts.BackupKeep, opts.protect)
+		if err != nil {
 			return n, err
+		}
+		if opts.savedAs != nil {
+			*opts.savedAs = saved
 		}
 	}
 	if force {
@@ -314,55 +323,139 @@ const backupPrefix, backupMarker = "bak.", ".bak-"
 // backupLayout is a fixed-width UTC timestamp, so names sort chronologically.
 const backupLayout = "20060102T150405.000000000Z"
 
-// backup hard-links an existing regular target to a new timestamped name after
-// pruning that file's oldest backups to keep-1. A missing target needs none.
-func (f filesystem) backup(target string, keep int) error {
+// backup hard-links an existing regular target to a new timestamped name,
+// returned as saved, after pruning that file's oldest backups to keep-1. The
+// protected backup is never pruned, so keeping it may leave keep+1 backups. A
+// missing target needs no backup.
+func (f filesystem) backup(target string, keep int, protect string) (saved string, err error) {
 	info, err := f.Lstat(target)
 	if os.IsNotExist(err) {
-		return nil
+		return "", nil
 	}
 	if err != nil {
-		return fmt.Errorf("stat destination for backup: %w", err)
+		return "", fmt.Errorf("stat destination for backup: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("cannot back up non-regular destination: %s", target)
+		return "", fmt.Errorf("cannot back up non-regular destination: %s", target)
 	}
 	backups, err := f.Backups(target)
 	if err != nil {
-		return err
+		return "", err
 	}
-	for len(backups) >= keep {
-		if err := f.Remove(backups[0]); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove old backup: %w", err)
+	count := len(backups)
+	for _, old := range backups {
+		if count < keep {
+			break
 		}
-		backups = backups[1:]
+		if old == protect {
+			continue
+		}
+		if err := f.Remove(old); err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("remove old backup: %w", err)
+		}
+		count--
 	}
 	name := f.join(f.dir(target), backupPrefix+f.base(target)+backupMarker+time.Now().UTC().Format(backupLayout))
 	if err := f.Link(target, name); err != nil {
-		return fmt.Errorf("back up destination: %w", err)
+		return "", fmt.Errorf("back up destination: %w", err)
 	}
-	return nil
+	return name, nil
 }
 
 // Backups lists target's backups, oldest first.
 func (f filesystem) Backups(target string) ([]string, error) {
+	backups, err := f.backups(target)
+	names := make([]string, len(backups))
+	for i, b := range backups {
+		names[i] = b.Path
+	}
+	return names, err
+}
+
+// Backup is one saved version of a file.
+type Backup struct {
+	Path string
+	Time time.Time // when the backup was taken, UTC
+	Size int64
+}
+
+// backups lists target's backups, oldest first.
+func (f filesystem) backups(target string) ([]Backup, error) {
 	entries, err := f.ReadDir(f.dir(target))
 	if err != nil {
 		return nil, fmt.Errorf("list backups: %w", err)
 	}
 	prefix := backupPrefix + f.base(target) + backupMarker
-	var names []string
+	var backups []Backup
 	for _, e := range entries {
 		stamp, ok := strings.CutPrefix(e.Name(), prefix)
 		if !ok || !e.Mode().IsRegular() {
 			continue
 		}
-		if _, err := time.Parse(backupLayout, stamp); err == nil {
-			names = append(names, f.join(f.dir(target), e.Name()))
+		if taken, err := time.Parse(backupLayout, stamp); err == nil {
+			backups = append(backups, Backup{Path: f.join(f.dir(target), e.Name()), Time: taken, Size: e.Size()})
 		}
 	}
-	sort.Strings(names)
-	return names, nil
+	sort.Slice(backups, func(i, j int) bool { return backups[i].Path < backups[j].Path })
+	return backups, nil
+}
+
+// ListBackups resolves target (nil client for local) and returns its backups,
+// newest first.
+func ListBackups(ctx context.Context, client *sftp.Client, target string) (resolved string, backups []Backup, err error) {
+	if err = ctx.Err(); err != nil {
+		return "", nil, err
+	}
+	defer closeOnCancel(ctx, nil, client)(&err)
+	fs := filesystem{client}
+	if resolved, err = fs.resolve(target); err != nil {
+		return "", nil, err
+	}
+	resolved = fs.clean(resolved)
+	backups, err = fs.backups(resolved)
+	for i, j := 0, len(backups)-1; i < j; i, j = i+1, j-1 {
+		backups[i], backups[j] = backups[j], backups[i]
+	}
+	return resolved, backups, err
+}
+
+// RestoreResult reports what Restore did.
+type RestoreResult struct {
+	// SavedAs is the backup of the version that was replaced; empty when the
+	// target was missing or already identical.
+	SavedAs string
+	// Unchanged is set when the target already matched the backup.
+	Unchanged bool
+}
+
+// Restore puts the backup at path back in place of target, atomically. The
+// current target is first backed up like cp --backup (keeping at most keep
+// backups, never pruning the one restored), so a restore can itself be undone.
+// Nothing changes when target already matches the backup. path must be one of
+// ListBackups(target).
+func Restore(ctx context.Context, client *sftp.Client, target, path string, keep int) (result RestoreResult, err error) {
+	if keep < 1 {
+		return result, fmt.Errorf("keep must be at least 1")
+	}
+	resolved, backups, err := ListBackups(ctx, client, target)
+	if err != nil {
+		return result, err
+	}
+	found := false
+	for _, b := range backups {
+		found = found || b.Path == path
+	}
+	if !found {
+		return result, fmt.Errorf("%s is not a backup of %s", path, resolved)
+	}
+	defer closeOnCancel(ctx, nil, client)(&err)
+	fs := filesystem{client}
+	opts := Options{BackupKeep: keep, protect: path, savedAs: &result.SavedAs}
+	if err = fs.requirePublish(opts); err != nil {
+		return result, err
+	}
+	_, result.Unchanged, err = copyFile(ctx, fs, fs, path, resolved, opts, nil)
+	return result, err
 }
 
 // ResolveLocalPath expands the current user's home and returns an absolute path.

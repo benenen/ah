@@ -193,18 +193,40 @@ func testCopyFile(t *testing.T, l *lab) {
 	if got := l.remote("lab", "cd ~ && cat "+backups[0]+" "+backups[1]+" app.conf"); got != "v3\nv4\nv5" {
 		t.Fatalf("backup contents %q", got)
 	}
-	// Restoring is renaming a backup back.
-	l.remote("lab", "cd ~ && cp "+backups[0]+" app.conf")
-	if got := l.remote("lab", "cat ~/app.conf"); got != "v3" {
+	// backup ls lists newest first; restore defaults to the newest and saves
+	// the version it replaces, so it can be undone.
+	listing := l.ok("backup", "ls", target)
+	if lines := strings.Split(strings.TrimSpace(listing), "\n"); len(lines) != 3 || !strings.Contains(lines[1], backups[1]) || !strings.Contains(lines[2], backups[0]) {
+		t.Fatalf("backup ls:\n%s", listing)
+	}
+	if out := l.ok("backup", "restore", "--backup-keep", "2", target, "2"); !strings.Contains(out, "Restored "+target+" from "+backups[0]) {
+		t.Fatalf("restore: %s", out)
+	}
+	if got := l.remote("lab", "cat ~/app.conf; stat -c %a ~/app.conf"); got != "v3\n640" {
 		t.Fatalf("restore %q", got)
 	}
+	// Keep 2 while restoring the oldest: it survives, the other one goes.
+	if got := l.remote("lab", "cd ~ && cat bak.app.conf.bak-*"); got != "v3\nv5" {
+		t.Fatalf("backups after restore %q", got)
+	}
+	// Undo: the newest backup holds v5, replaced by that restore...
+	l.ok("b", "restore", target)
+	if got := l.remote("lab", "cat ~/app.conf"); got != "v5" {
+		t.Fatalf("undo restore %q", got)
+	}
+	// ...and redo: now the newest holds v3 again.
+	l.ok("b", "restore", target)
+	if got := l.remote("lab", "cat ~/app.conf"); got != "v3" {
+		t.Fatalf("redo restore %q", got)
+	}
 	// Identical content is left alone and makes no backup.
+	before := l.remote("lab", "cd ~ && ls bak.app.conf.bak-*")
 	writeFile(t, local, "v3\n", 0600)
 	if out := l.ok("cp", "--backup", "--backup-keep", "2", local, target); !strings.Contains(out, "Unchanged") {
 		t.Fatalf("identical copy: %s", out)
 	}
-	if n := len(strings.Fields(l.remote("lab", "cd ~ && ls bak.app.conf.bak-*"))); n != 2 {
-		t.Fatalf("identical copy changed backups: %d", n)
+	if after := l.remote("lab", "cd ~ && ls bak.app.conf.bak-*"); after != before {
+		t.Fatalf("identical copy changed backups:\n%s\n->\n%s", before, after)
 	}
 	l.fails("--backup-keep", "cp", "--backup", "--backup-keep", "0", local, target)
 }
@@ -418,6 +440,13 @@ func testSudoWithoutPassword(t *testing.T, l *lab) {
 	l.ok("cp", "-r", l.path("site"), "lab:/root/")
 	if got := l.remote("lab", "cat /root/site/index.html"); got != "home v2" {
 		t.Fatalf("root tree %q", got)
+	}
+	// Backups and restores of root-owned files go through the sudo SFTP server.
+	writeFile(t, local, "root owned v2\n", 0600)
+	l.ok("cp", "--backup", local, "lab:/root/root.txt")
+	l.ok("backup", "restore", "lab:/root/root.txt")
+	if got := l.remote("lab", "cat /root/root.txt; ls /root | grep -c '^bak.root.txt.bak-'"); got != "root owned\n2" {
+		t.Fatalf("root restore %q", got)
 	}
 	l.ok("edit", "lab", "--sudo=false")
 	if got := l.remote("lab", "id -u"); got == "0" {

@@ -1,11 +1,11 @@
 ---
 name: ah-cli
-description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件和目录（可在覆盖前备份）、查询重跑复制历史、管理 SSH 端口转发（含把只在内网或仅监听 127.0.0.1 的数据库、Redis、Web 后台等服务拉到本机端口、起 SOCKS5 代理浏览内网网站、把本机服务暴露给服务器）、配置 SOCKS5 多跳和 sudo。当用户提到 ah、bin/ah，或要求通过 ah 连接服务器、传文件、管理转发、访问只能经 SSH 到达的数据库/缓存/内网网站等端口、配置认证/代理/提权时使用。
+description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件和目录（可在覆盖前备份并还原）、查询重跑复制历史、管理 SSH 端口转发（含把只在内网或仅监听 127.0.0.1 的数据库、Redis、Web 后台等服务拉到本机端口、起 SOCKS5 代理浏览内网网站、把本机服务暴露给服务器）、配置 SOCKS5 多跳和 sudo。当用户提到 ah、bin/ah，或要求通过 ah 连接服务器、传文件、管理转发、访问只能经 SSH 到达的数据库/缓存/内网网站等端口、配置认证/代理/提权时使用。
 ---
 
 # 使用 ah CLI
 
-命令与简写：`connect/c`、`copy/cp`、`edit/e`、`forward/f`、`history/h`、`list/ls`、`new/n`、`remove/rm`、`version/v`。参数完全一致；`h` 是历史命令，`v` 输出版本与构建信息，`-h` 是帮助选项。
+命令与简写：`backup/b`、`connect/c`、`copy/cp`、`edit/e`、`forward/f`、`history/h`、`list/ls`、`new/n`、`remove/rm`、`version/v`。参数完全一致；`h` 是历史命令，`v` 输出版本与构建信息，`-h` 是帮助选项。
 
 ## 先确定二进制和操作对象
 
@@ -29,6 +29,7 @@ description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制
 | 访问只在内网可达的数据库/缓存/Web 等服务 | `f NAME LOCAL TARGET -d`，再让客户端连 `127.0.0.1:LOCAL` |
 | 管理已有转发 | `f ls`、`f kill ID`、`f start ID`、`f restart ID`、`f rm ID`、`f rm --all` |
 | 上传/下载/远端互传 | `cp SOURCE DESTINATION`，目录加 `-r`，覆盖前留备份加 `--backup` |
+| 查看或还原被覆盖的旧版本 | `backup ls TARGET`、`backup restore TARGET [VERSION]` |
 | 查找并复用复制操作 | `history search WORDS...` → `history show ID` → `history run ID` |
 | 持久化代理链 | `edit NAME --proxy ADDRESS --proxy ADDRESS` |
 | 持久化默认提权 | `edit NAME --sudo`，可另加 `--sudo-password` |
@@ -132,7 +133,7 @@ ah history run 12
 
 没有 `NAME:` 前缀就是本地路径；含冒号的本地文件使用 `./` 或绝对路径。核对源、目标、当前目录和覆盖意图。只支持单个普通文件，父目录需存在；远端到远端经本机中转，无需两台服务器互相连接。
 
-默认拒绝覆盖，只有明确要求替换时加 `--force`；替换配置等重要文件时优先 `--backup`，它隐含覆盖并在同目录保留旧版本（默认最近 5 份，`--backup-keep N` 调整），还原就是把 `bak.NAME.bak-时间戳` 改回原名。内容和权限都没变的文件会跳过（输出 unchanged），不产生多余备份。`-r` 按 cp -r 规则：目标是已有目录时落到“目标/源目录名”；落点已存在时要 `-f` 或 `--backup` 才合并，多余文件不删；符号链接跳过并打印 Skipped，需要时单独处理。树复制中途失败会留下已复制的部分。`rm NAME` 只删连接，不是远端文件删除命令。断点续传及通配符展开不是 cp 功能。
+默认拒绝覆盖，只有明确要求替换时加 `--force`；替换配置等重要文件时优先 `--backup`，它隐含覆盖并在同目录保留旧版本（默认最近 5 份，`--backup-keep N` 调整），还原用 `ah backup ls NAME:PATH` 看版本（1 为最新），`ah backup restore NAME:PATH [序号|时间戳前缀]` 还原，默认最新；还原前会自动备份当前版本，还原错了再 `b restore` 即可撤回，别手工 mv 覆盖。内容和权限都没变的文件会跳过（输出 unchanged），不产生多余备份。`-r` 按 cp -r 规则：目标是已有目录时落到“目标/源目录名”；落点已存在时要 `-f` 或 `--backup` 才合并，多余文件不删；符号链接跳过并打印 Skipped，需要时单独处理。树复制中途失败会留下已复制的部分。`rm NAME` 只删连接，不是远端文件删除命令。断点续传及通配符展开不是 cp 功能。
 
 重跑前用 `show ID` 核对目标及原 force；在原授权范围内直接 `run ID`，不要 `eval` 输出。重跑保留原 cwd 和配置/密钥/known_hosts 路径，但使用当前连接定义（代理/sudo 可能已变），并新增历史。不要把重跑当成回滚文件内容。用户要求不覆盖时，不能直接重跑带 force 的历史，应使用 `history run ID --force=false`。
 

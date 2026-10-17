@@ -330,3 +330,81 @@ func TestUnchangedFilesAreSkipped(t *testing.T) {
 		})
 	}
 }
+
+func TestListAndRestoreBackups(t *testing.T) {
+	for _, mode := range []string{"local", "remote"} {
+		t.Run(mode, func(t *testing.T) {
+			var client *sftp.Client
+			if mode == "remote" {
+				client = localSFTP(t)
+			}
+			dir := t.TempDir()
+			source, target := filepath.Join(dir, "source"), filepath.Join(dir, "app.conf")
+			for _, v := range []string{"v1", "v2", "v3", "v4"} {
+				if err := os.WriteFile(source, []byte(v), 0640); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := Copy(context.Background(), nil, client, source, target, Options{BackupKeep: 3}); err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(time.Millisecond)
+			}
+			resolved, backups, err := ListBackups(context.Background(), client, target)
+			if err != nil || resolved != target || len(backups) != 3 {
+				t.Fatalf("list %q %v %v", resolved, backups, err)
+			}
+			for i, want := range []string{"v3", "v2", "v1"} { // newest first
+				if readFile(t, backups[i].Path) != want || backups[i].Size != 2 || backups[i].Time.IsZero() {
+					t.Fatalf("backup %d: %+v", i, backups[i])
+				}
+			}
+			if !backups[0].Time.After(backups[2].Time) {
+				t.Fatal("not newest first")
+			}
+
+			// Restoring the oldest keeps it although it is next in line to prune,
+			// and saves the replaced version so the restore can be undone.
+			oldest := backups[2].Path
+			result, err := Restore(context.Background(), client, target, oldest, 3)
+			if err != nil || result.Unchanged || result.SavedAs == "" {
+				t.Fatalf("restore %+v %v", result, err)
+			}
+			if readFile(t, target) != "v1" || readFile(t, result.SavedAs) != "v4" {
+				t.Fatal("wrong contents after restore")
+			}
+			if info, _ := os.Stat(target); info.Mode().Perm() != 0640 {
+				t.Fatalf("mode %v", info.Mode().Perm())
+			}
+			_, backups, _ = ListBackups(context.Background(), client, target)
+			var kept []string
+			for _, b := range backups {
+				kept = append(kept, readFile(t, b.Path))
+			}
+			if strings.Join(kept, ",") != "v4,v3,v1" {
+				t.Fatalf("backups after restore: %v", kept)
+			}
+
+			// Restoring the same version again changes nothing.
+			result, err = Restore(context.Background(), client, target, oldest, 3)
+			if err != nil || !result.Unchanged || result.SavedAs != "" {
+				t.Fatalf("repeat restore %+v %v", result, err)
+			}
+			if _, after, _ := ListBackups(context.Background(), client, target); len(after) != 3 {
+				t.Fatalf("repeat restore made a backup: %v", after)
+			}
+			// A missing target is simply recreated.
+			if err := os.Remove(target); err != nil {
+				t.Fatal(err)
+			}
+			if result, err := Restore(context.Background(), client, target, oldest, 3); err != nil || result.SavedAs != "" || readFile(t, target) != "v1" {
+				t.Fatalf("restore missing target %+v %v", result, err)
+			}
+			if _, err := Restore(context.Background(), client, target, source, 3); err == nil {
+				t.Fatal("restored from a file that is not a backup")
+			}
+			if _, none, err := ListBackups(context.Background(), client, source); err != nil || len(none) != 0 {
+				t.Fatalf("file without backups: %v %v", none, err)
+			}
+		})
+	}
+}

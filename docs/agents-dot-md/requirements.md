@@ -23,6 +23,7 @@
 | `ah rm <name>` | 删除配置中的连接记录，名称不存在时报错 |
 | `ah connect <name> [COMMAND [ARG...]]` / `ah c <name> [COMMAND [ARG...]]` | 无命令时交互登录；带命令时执行远程命令并退出，两者等价并支持连接名补全 |
 | `ah cp A:/source/file B:/target/file` | 从 A 经 SFTP 读取，并经 SFTP 写入 B |
+| `ah backup ls/restore TARGET` | 列出/还原 `cp --backup` 留下的备份 |
 | `ah completion <shell>` | 输出 shell 补全脚本，首批覆盖 Bash、Zsh、Fish |
 | `ah version` / `ah v` | 输出版本、commit、构建时间与运行平台；版本由构建时注入，源码构建显示 dev |
 
@@ -56,6 +57,7 @@ user = "bob"
 - 以同目录临时文件暂存；远端默认使用 hardlink@openssh.com 原子发布，--force 使用 posix-rename@openssh.com；本地使用 os.Link/os.Rename。服务端不支持对应扩展时失败；覆盖前保护原目标。失败尽力清理，连接中断时在错误中报告可能残留的临时文件。
 - `cp -r`：按 cp -r 解析目标（已有目录则落到 目标/源名，否则新建）；落点已存在时无 -f 在写入前报错，-f 合并（同名文件逐个原子替换，多余文件保留）；文件/目录类型冲突报错；同一文件系统禁止复制进自身。符号链接与特殊文件跳过并在 stderr 报告。目录先以 0700 建立，结束后自深向浅设源权限位，合并时不改已有目录权限。树整体非原子，失败保留已复制文件。本地目标逐个文件检查历史库保护。
 - `--backup [--backup-keep N]`（默认 5，1–1000）：替换已有普通文件前，将其硬链接为同目录 `bak.NAME.bak-<UTC 纳秒时间戳>`，此前按时间删除最旧的同名备份使总数不超过 N；只识别严格匹配该格式的文件。隐含覆盖（用于目录时隐含合并）；远端需 hardlink@openssh.com。
+- `backup ls TARGET` 按时间倒序列出 TARGET 的备份（序号、UTC 时间、大小、文件名），无备份时正常退出并说明。`backup restore TARGET [VERSION] [--backup-keep N]`：VERSION 省略取最新，可为序号（<8 位数字）、≥8 位的时间戳前缀或完整备份名，匹配多份报错；先按 --backup 规则备份当前文件（被还原的那份不参与清理，可能因此多留一份），再原子写回，内容相同则不动；目标缺失也可还原；不写复制历史。
 - 替换模式（-f/--backup）下，目标为普通文件且大小、权限位、内容均与源相同时跳过：不替换、不备份，计为 unchanged 并在输出中报告；进度按已完成计。
 - `ah cp <Tab>` 可补全连接别名；`ah cp A:/dir/<Tab>` 查询 A 的目录；第二个参数按 B 的连接独立补全。
 - 目录候选追加 `/`，正确处理空格、中文及 shell 特殊字符；使用 SFTP 列目录，不拼接远程 shell 命令。

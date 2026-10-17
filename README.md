@@ -9,6 +9,7 @@ Go 编写的 SSH 连接管理 CLI。使用 TOML 保存命名连接，支持 SSH 
 | 完整命令 | 简写 |
 | --- | --- |
 | `connect` | `c` |
+| `backup` | `b` |
 | `copy` | `cp` |
 | `edit` | `e` |
 | `forward` | `f` |
@@ -239,7 +240,21 @@ ah cp -r --backup ./site nas:/var/www/              # 目录合并时逐个文�
 ```
 
 `--backup` 在替换已有目标文件前，先把旧文件硬链接为同目录下的 `bak.原文件名.bak-UTC时间戳`（如 `bak.config.toml.bak-20260930T123456.123456789Z`），再原子替换；目标不存在时不产生备份。`--backup` 隐含覆盖，不需要再加 `-f`，用于目录时也隐含合并。
-备份前先按时间删除该文件最旧的备份，使备份数不超过 `--backup-keep`（默认 5，范围 1–1000）；只清理名称完全符合 `bak.原文件名.bak-时间戳` 格式的文件。还原时把想要的版本改回原名即可，例如 `ah c nas mv /etc/app/bak.config.toml.bak-20260930T123456.123456789Z /etc/app/config.toml`。远端备份要求 `hardlink@openssh.com`。
+备份前先按时间删除该文件最旧的备份，使备份数不超过 `--backup-keep`（默认 5，范围 1–1000）；只清理名称完全符合 `bak.原文件名.bak-时间戳` 格式的文件。还原用 `ah backup`（简写 `ah b`），见下文。远端备份要求 `hardlink@openssh.com`。
+
+### 查看与还原备份
+
+```sh
+ah backup ls nas:/etc/app/config.toml               # 列出备份，最新在前，带序号
+ah backup restore nas:/etc/app/config.toml          # 还原到最新一份
+ah backup restore nas:/etc/app/config.toml 3        # 按 ls 中的序号
+ah backup restore nas:/etc/app/config.toml 20260930T1234   # 按时间戳前缀
+ah b restore ./app.conf                             # 本地文件同样适用
+```
+
+TARGET 写原文件路径，不是备份文件本身。`ls` 显示序号（1 为最新）、备份时间（UTC）、大小和备份文件名。`restore` 的 VERSION 省略时取最新；可写序号、至少含 8 位日期（YYYYMMDD）的时间戳前缀或完整备份文件名，前缀匹配到多份时报错。
+还原以原子替换写回，权限取自备份。还原前先把当前文件也备份一份（输出里会给出名字），所以还原本身可以再用 `ah b restore` 撤回；备份数同样受 `--backup-keep`（默认 5）限制，但正被还原的那份不会被清理。当前内容已与所选备份相同时不做改动。原文件被删掉时也能还原。sudo 连接下经提权的 SFTP 读写，可还原 root 文件。还原不写入复制历史。
+
 替换已有文件时（`-f` 或 `--backup`），若目标与源大小、权限位和内容都完全相同，就跳过该文件：不替换、不备份，输出中计为 unchanged（单个文件打印 `Unchanged (identical content)`）。比较需要把目标完整读一遍，远端大文件会多花一次读取时间；只有权限位不同时仍会替换。
 
 ## 复制历史
@@ -320,7 +335,7 @@ make clean                 # 清理构建产物
 
 测试启动本地 SSH/SFTP 服务，使用临时密钥和配置；Bash/Zsh/Fish 测试在隔离的伪终端中实际按 Tab 并复制含特殊字符的文件。缺少对应 shell 时跳过该 shell 测试。
 
-`make e2e` 需要 Docker：用 `e2e/sshd` 构建一个真实 OpenSSH（Alpine）镜像，另起一台只在 Docker 内网可达的 Web 服务，再用编译出的 `ah` 按顺序跑完整场景——首次连接指纹确认（拒绝/接受/密钥变化）、远程命令的输出流与退出码、交互 shell、保存密码登录、单文件与目录复制（含权限、中文路径、符号链接跳过、合并、`--backup` 保留份数与还原、内容相同跳过、远端互传）、历史查询与重跑、`-L`/`-D`/`-R` 转发（含 `GatewayPorts`、日志、kill/start/restart、`rm --all`）、免密与带密码的 sudo 及 root 复制。交互提示用伪终端驱动。每次运行使用独立的临时 HOME、配置、known_hosts、主密钥和历史，结束时删除容器与网络，只保留 `ah-e2e-sshd` 镜像作构建缓存。镜像里的密码和运行时注入的密钥都是一次性的测试数据。未安装 Docker 或守护进程不可用时测试跳过；普通 `go test ./...` 不会运行它（`e2e` 构建标签）。
+`make e2e` 需要 Docker：用 `e2e/sshd` 构建一个真实 OpenSSH（Alpine）镜像，另起一台只在 Docker 内网可达的 Web 服务，再用编译出的 `ah` 按顺序跑完整场景——首次连接指纹确认（拒绝/接受/密钥变化）、远程命令的输出流与退出码、交互 shell、保存密码登录、单文件与目录复制（含权限、中文路径、符号链接跳过、合并、`--backup` 保留份数、`backup ls/restore` 还原与撤回、内容相同跳过、远端互传）、历史查询与重跑、`-L`/`-D`/`-R` 转发（含 `GatewayPorts`、日志、kill/start/restart、`rm --all`）、免密与带密码的 sudo 及 root 复制。交互提示用伪终端驱动。每次运行使用独立的临时 HOME、配置、known_hosts、主密钥和历史，结束时删除容器与网络，只保留 `ah-e2e-sshd` 镜像作构建缓存。镜像里的密码和运行时注入的密钥都是一次性的测试数据。未安装 Docker 或守护进程不可用时测试跳过；普通 `go test ./...` 不会运行它（`e2e` 构建标签）。
 
 设计和开发约定见 [AGENTS.md](AGENTS.md)。依赖接口参考 [Cobra 补全文档](https://cobra.dev/docs/how-to-guides/shell-completion/)、[SFTP API](https://pkg.go.dev/github.com/pkg/sftp)、[SSH API](https://pkg.go.dev/golang.org/x/crypto/ssh) 和 [TOML API](https://pkg.go.dev/github.com/pelletier/go-toml/v2)。
 
