@@ -83,7 +83,7 @@ user = "bob"
 
 交互模式申请 PTY 时，按 OpenSSH 的做法在切换 raw 前读取本地终端设置，把控制字符、输入/输出/本地标志和真实波特率随 pty-req 发给远端；erase 键与 IUTF8 必须生效，否则 backspace 在 canonical 输入下会按字节删除多字节字符。CS7/CS8 共用 CSIZE 位且服务端按任意顺序应用，只发送当前实际字宽；sudo 认证期间仍强制关闭回显。
 
-pty-req 的 TERM 优先级为全局 `--term` > 连接 TOML 的 `term` > 本地 `$TERM` > `xterm-256color`；`term` 字段校验不含空白与控制字符，new/edit 用 `--term` 设置、`--clear-term` 清除。该字段用于远端 terminfo 缺少本地终端类型的场景，否则远端行编辑会退化。
+pty-req 的 TERM 优先级为全局 `--term` > 连接 TOML 的 `term` > 本地 `$TERM` > `xterm-256color`；`term` 字段校验不含空白与控制字符。new 默认保存 `term = "xterm-256color"`，可用 `--term` 覆盖或 `--term ''` 使用本地 `$TERM`；edit 用 `--term` 设置、`--clear-term` 清除。该字段用于远端 terminfo 缺少本地终端类型的场景，否则远端行编辑会退化。
 
 ## SOCKS5 代理契约
 

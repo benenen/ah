@@ -35,7 +35,7 @@ func connectionFlags(cmd *cobra.Command, c *config.Connection) {
 	cmd.Flags().BoolVar(&c.Sudo, "sudo", false, "run SSH commands and remote file operations as root")
 	cmd.Flags().StringVar(&c.SFTPServer, "sftp-server", "", "absolute remote SFTP server path for sudo (empty to detect common paths)")
 	cmd.Flags().StringVar(&c.SudoShell, "sudo-shell", "", "login shell for an escalated interactive session (default bash, falls back to /bin/sh)")
-	cmd.Flags().StringVar(&c.Term, "term", "", "TERM to send for interactive sessions (empty to use $TERM)")
+	cmd.Flags().StringVar(&c.Term, "term", c.Term, "TERM to send for interactive sessions (empty to use $TERM)")
 	cmd.Flags().StringArrayVar(&c.Proxies, "proxy", nil, "SOCKS5 HOST:PORT or socks5://HOST:PORT; repeat in hop order")
 	cmd.Flags().StringVar(&c.Host, "host", "", "hostname or IP address")
 	cmd.Flags().IntVarP(&c.Port, "port", "p", 22, "SSH port")
@@ -43,7 +43,7 @@ func connectionFlags(cmd *cobra.Command, c *config.Connection) {
 	cmd.Flags().StringVarP(&c.IdentityFile, "identity-file", "i", "", "private key path (empty to use agent/default keys)")
 }
 func (a *app) newCommand() *cobra.Command {
-	var c config.Connection
+	c := config.Connection{Term: "xterm-256color"}
 	var password, sudoPassword bool
 	cmd := &cobra.Command{Use: "new NAME --host HOST --user USER", Aliases: []string{"n"}, Short: "Save a new connection", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.ValidateName(args[0]); err != nil {

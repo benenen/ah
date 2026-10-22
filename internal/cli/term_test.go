@@ -11,7 +11,7 @@ import (
 func TestTermIsSavedClearedAndValidated(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "connections.toml")
 	run := func(args ...string) (string, error) { return execute(t, append([]string{"--config", p}, args...)...) }
-	if _, err := run("new", "dev", "--host", "example.com", "--user", "alice", "--term", "xterm-256color"); err != nil {
+	if _, err := run("new", "dev", "--host", "example.com", "--user", "alice"); err != nil {
 		t.Fatal(err)
 	}
 	load := func() config.Connection {
