@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/benenen/ah/internal/completion"
-	"github.com/benenen/ah/internal/sshclient"
 	"github.com/spf13/cobra"
 )
 
@@ -68,7 +67,7 @@ func (a *app) completeRemote(cmd *cobra.Command, args []string, partial string) 
 	// No callbacks: pressing Tab must never prompt, save host keys or echo diagnostics.
 	opts := a.connectionSSHOptions(cmd, name, c, false)
 	opts.Timeout = timeout
-	client, err := sshclient.Dial(ctx, c, opts)
+	client, err := a.dialSSH(ctx, cmd, name, c, opts, false)
 	if err != nil {
 		return nil, directive
 	}

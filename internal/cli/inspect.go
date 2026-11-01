@@ -18,6 +18,7 @@ type inspectedProxy struct {
 }
 
 type inspectedConnection struct {
+	Jump                   string           `json:"jump"`
 	Name                   string           `json:"name"`
 	ConfigFile             string           `json:"config_file"`
 	Host                   string           `json:"host"`
@@ -80,7 +81,7 @@ func (a *app) inspectCommand() *cobra.Command {
 			}
 			// Use an explicit output model so newly added credential fields cannot leak.
 			info := inspectedConnection{
-				Name: args[0], ConfigFile: path, Host: c.Host, Port: c.Port, User: c.User,
+				Jump: c.Jump, Name: args[0], ConfigFile: path, Host: c.Host, Port: c.Port, User: c.User,
 				IdentityFile: c.IdentityFile, PasswordConfigured: c.Password != "", Proxies: proxies,
 				Sudo: c.Sudo, SudoPasswordConfigured: c.SudoPassword != "", SudoShell: c.SudoShell,
 				SFTPServer: c.SFTPServer, Term: c.Term, EffectiveTerm: terminal,

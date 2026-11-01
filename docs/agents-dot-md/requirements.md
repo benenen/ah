@@ -27,7 +27,7 @@
 | `ah completion <shell>` | 输出 shell 补全脚本，首批覆盖 Bash、Zsh、Fish |
 | `ah version` / `ah v` | 输出版本、commit、构建时间与运行平台；版本由构建时注入，源码构建显示 dev |
 
-`connect`、`completion`、`version` 是配套命令约定。SSH 跳板机、断点续传暂不列入已确定范围。遇到已有目标文件时默认报错；显式覆盖选项为 `--force` / `-f`。
+`connect`、`completion`、`version` 是配套命令约定。SSH 命名跳板机已扩展支持，见下文；断点续传按后续扩展契约执行。遇到已有目标文件时默认报错；显式覆盖选项为 `--force` / `-f`。
 
 ## 配置
 
@@ -140,3 +140,31 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 `forward rm --all` 只删 stopped/failed 并在 stderr 提示跳过其余；`--all -f` 对每条按 `rm -f` 处理，单条失败不中断其余，最终非零退出；`--all` 与 ID 互斥。
 记录不可读时只有 `-f` 可删（普通 rm 报错并提示），删除前必须向 stderr 警告其控制通道不可知、可能残留监听；不可读记录不得绕过状态检查。
 生命周期操作按 ID 加锁（锁文件保留）；控制通道不可达时保留记录并报错，不通过旧 PID 杀进程。
+
+## 连接复制与查询扩展
+
+`clone OLD NEW` 保留原连接，`rename OLD NEW` 删除原别名。新别名须合法且不存在；配置更新锁内完成凭据按新名重新加密，兼容旧 sudo 绑定。失败不提交配置。历史和转发不改名。
+
+`list --json` 输出按名称排序的安全字段数组（name/host/port/user/term）。`history [search] --json` 输出记录数组，空数组为 []；`--status` 精确匹配合法状态，`--connection` 精确匹配源/目标连接名；`--after/--before` 为 RFC3339 开始时间范围，左闭右开；所有条件与关键词取交集，先筛选再应用 limit。
+
+## 复制预览与排除
+
+`cp --dry-run` 复用端点解析、认证与发布扩展校验，以只读查询列出最终落点及目录创建/合并、文件新增/替换/相同跳过、特殊文件跳过、排除、备份和旧备份清理。不写复制历史或目标，源目标变化及实际写权限/空间不作保证；首次 SSH 信任维持原行为。
+
+`cp -r --exclude PATTERN` 可重复，Go path.Match 的 POSIX 相对 glob；无斜杠匹配任意层级 basename，有斜杠匹配源根相对路径，尾斜杠限定目录，命中目录剪枝。不支持递归 ** 语义、绝对路径、.. 段和反斜杠。非法模式在传输前拒绝，排除项不计进度；SQLite 自动补 exclude_patterns JSON 列，旧记录无排除，show/run 保留模式。
+
+## 诊断与保活扩展
+
+`doctor NAME` 检查配置、认证资料加载、TCP/代理链、SSH 密钥交换、host key、认证、sudo（启用时）、SFTP 及 hardlink/posix-rename 扩展，各阶段输出 OK/FAIL；失败非零。不绕过主机身份校验，不写测试文件。SFTP 启动受 --timeout 约束。
+
+全局 `--keepalive` 默认 0 关闭，负值拒绝；非零周期发送 want-reply SSH 请求，任意回复视为存活，超时按 --timeout 关闭连接，取消与关闭回收请求 goroutine。`forward --continue-on-error` 默认 false，启用时单次 -L/-R 目标拨号/传输错误写 stderr 并继续监听；SSH channel-open 超时仍结束传输。后台与 start/restart 保留选项，显式标志覆盖保存值。
+
+## 重连与 SSH 跳板扩展
+
+`forward --reconnect` 默认 false，首次启动成功后才自动重连，等待 1s 指数增长到 30s，使用原 ID/最终监听地址和当前连接定义。重连不提示认证或首次信任，始终校验主机密钥；失败无回退。重连期间状态 running，ERROR 标明 reconnecting，日志记录重试错误，控制通道继续响应停止。旧 TCP 不恢复、监听可暂时中断。start/restart/后台保留布尔选项，显式标志可覆盖。
+
+连接 `jump` 字段由 `new/edit --jump ALIAS` 设置，空字符串清除；与当前连接 SOCKS5 代理互斥，但跳板本身可配置代理。逐跳使用 SSH direct-tcpip、独立身份认证/主机密钥和超时，最多 32 个连接；使用前解析全链拒绝循环与缺失引用。跳板 sudo 不用于转发，关闭最终连接释放整链，失败不直连回退。统一入口用于所有 SSH 调用与补全（补全的总 context 限时仍生效）。rename 原子更新入站 jump 引用。
+
+## 断点续传扩展
+
+`cp --resume` 支持四种方向及递归逐文件复制，历史自动补 resume INTEGER 列（旧记录 false），show/run 保留。失败保留随机同目录 `.ah-resume-<fingerprint>-<random>`，fingerprint 绑定源/目标路径、源 SHA-256 和权限；只读取普通片段、优先最大且不超过源长度。逐块比较前缀并复制到独立 staging，再复制剩余内容，校验实际源流 SHA-256、长度与源句柄 stat 大小/时间后才按原原子发布/备份规则发布。损坏片段失败，源变化不复用旧指纹；每次 staging 独立避免共享写入。取消关闭 SFTP，错误报告保留片段位置。成功只清理本次 staging，旧失败片段不自动删除。该策略完整预读源且克隆前缀，额外读取和空间成本不承诺网络流量降低。预览只读校验并显示 resume-prefix。

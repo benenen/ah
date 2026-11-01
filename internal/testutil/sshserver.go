@@ -212,3 +212,18 @@ func StartForwardSSH(t *testing.T, handler func(ssh.NewChannel)) *SSHServer {
 	t.Helper()
 	return startSSH(t, nil, nil, false, handler, nil)
 }
+
+// StartRequestSSH exposes global SSH requests for keepalive timeout tests.
+func StartRequestSSH(t *testing.T, handler func(*ssh.ServerConn, <-chan *ssh.Request)) *SSHServer {
+	t.Helper()
+	return startSSH(t, nil, nil, false, nil, handler)
+}
+
+// DisconnectClients simulates transport loss while retaining the listening SSH server.
+func (f *SSHServer) DisconnectClients() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for c := range f.conns {
+		_ = c.Close()
+	}
+}

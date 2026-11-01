@@ -4,6 +4,7 @@ package history
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -17,14 +18,23 @@ import (
 
 // Record contains copy metadata only; credentials and key contents must never be supplied.
 type Record struct {
-	ID                                                        int64
-	Source, Destination, Cwd, ConfigPath, KnownHosts, KeyPath string
-	Force, Recursive                                          bool
-	BackupKeep                                                int
-	StartedAt, FinishedAt                                     time.Time
-	Status                                                    string
-	Bytes                                                     int64
-	Error                                                     string
+	ID          int64     `json:"id"`
+	Source      string    `json:"source"`
+	Destination string    `json:"destination"`
+	Cwd         string    `json:"cwd"`
+	ConfigPath  string    `json:"config_path"`
+	KnownHosts  string    `json:"known_hosts"`
+	KeyPath     string    `json:"key_path"`
+	Force       bool      `json:"force"`
+	Recursive   bool      `json:"recursive"`
+	Resume      bool      `json:"resume"`
+	BackupKeep  int       `json:"backup_keep"`
+	Exclude     []string  `json:"exclude"`
+	StartedAt   time.Time `json:"started_at"`
+	FinishedAt  time.Time `json:"finished_at"`
+	Status      string    `json:"status"`
+	Bytes       int64     `json:"bytes"`
+	Error       string    `json:"error"`
 }
 
 type Store struct{ db *sql.DB }
@@ -100,7 +110,12 @@ func addColumns(db *sql.DB) error {
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
-	for _, column := range []string{"recursive", "backup_keep"} {
+	if !have["exclude_patterns"] {
+		if _, err := db.Exec(`ALTER TABLE copy_history ADD COLUMN exclude_patterns TEXT NOT NULL DEFAULT '[]'`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
+	}
+	for _, column := range []string{"recursive", "backup_keep", "resume"} {
 		if !have[column] {
 			// Concurrent openers may race to add the column; losing is harmless.
 			if _, err := db.Exec(`ALTER TABLE copy_history ADD COLUMN ` + column + ` INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -118,9 +133,13 @@ func (s *Store) Begin(ctx context.Context, r Record) (int64, error) {
 	if r.StartedAt.IsZero() {
 		r.StartedAt = time.Now().UTC()
 	}
+	patterns, err := json.Marshal(r.Exclude)
+	if err != nil {
+		return 0, err
+	}
 	result, err := s.db.ExecContext(ctx, `INSERT INTO copy_history
-		(source,destination,cwd,config_path,known_hosts,key_path,force,recursive,backup_keep,started_at,status,search_paths)
-		VALUES (?,?,?,?,?,?,?,?,?,?,'running',?)`, r.Source, r.Destination, r.Cwd, r.ConfigPath, r.KnownHosts, r.KeyPath, r.Force, r.Recursive, r.BackupKeep, r.StartedAt.UnixNano(), strings.ToLower(r.Source+"\n"+r.Destination))
+		(source,destination,cwd,config_path,known_hosts,key_path,force,recursive,backup_keep,started_at,status,search_paths,exclude_patterns,resume)
+		VALUES (?,?,?,?,?,?,?,?,?,?,'running',?,?,?)`, r.Source, r.Destination, r.Cwd, r.ConfigPath, r.KnownHosts, r.KeyPath, r.Force, r.Recursive, r.BackupKeep, r.StartedAt.UnixNano(), strings.ToLower(r.Source+"\n"+r.Destination), string(patterns), r.Resume)
 	if err != nil {
 		return 0, fmt.Errorf("record copy attempt: %w", err)
 	}
@@ -154,15 +173,19 @@ func (s *Store) Finish(ctx context.Context, id int64, bytes int64, status, error
 	return nil
 }
 
-const recordColumns = `id,source,destination,cwd,config_path,known_hosts,key_path,force,recursive,backup_keep,started_at,finished_at,status,bytes,error`
+const recordColumns = `id,source,destination,cwd,config_path,known_hosts,key_path,force,recursive,backup_keep,started_at,finished_at,status,bytes,error,exclude_patterns,resume`
 
 func scanRecord(row interface{ Scan(...any) error }) (Record, error) {
 	var r Record
 	var started int64
 	var finished sql.NullInt64
-	err := row.Scan(&r.ID, &r.Source, &r.Destination, &r.Cwd, &r.ConfigPath, &r.KnownHosts, &r.KeyPath, &r.Force, &r.Recursive, &r.BackupKeep, &started, &finished, &r.Status, &r.Bytes, &r.Error)
+	var patterns string
+	err := row.Scan(&r.ID, &r.Source, &r.Destination, &r.Cwd, &r.ConfigPath, &r.KnownHosts, &r.KeyPath, &r.Force, &r.Recursive, &r.BackupKeep, &started, &finished, &r.Status, &r.Bytes, &r.Error, &patterns, &r.Resume)
 	if err != nil {
 		return Record{}, err
+	}
+	if err := json.Unmarshal([]byte(patterns), &r.Exclude); err != nil {
+		return Record{}, fmt.Errorf("decode history excludes: %w", err)
 	}
 	r.StartedAt = time.Unix(0, started).UTC()
 	if finished.Valid {
@@ -181,7 +204,16 @@ func (s *Store) Get(ctx context.Context, id int64) (Record, error) {
 
 // Search ANDs whitespace-separated, case-insensitive literal substrings across
 // paths, status and error. Results are newest first; limit must be between 1 and 1000.
-func (s *Store) Search(ctx context.Context, query string, limit int) (records []Record, err error) {
+type SearchOptions struct {
+	Status, Connection string
+	After, Before      time.Time
+}
+
+func (s *Store) Search(ctx context.Context, query string, limit int) ([]Record, error) {
+	return s.SearchFiltered(ctx, query, limit, SearchOptions{})
+}
+
+func (s *Store) SearchFiltered(ctx context.Context, query string, limit int, opts SearchOptions) (records []Record, err error) {
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("history limit must be between 1 and 1000")
 	}
@@ -192,6 +224,28 @@ func (s *Store) Search(ctx context.Context, query string, limit int) (records []
 		statement += ` AND (search_paths LIKE ? ESCAPE '\' OR status LIKE ? ESCAPE '\' OR search_error LIKE ? ESCAPE '\')`
 		pattern := "%" + escape.Replace(token) + "%"
 		args = append(args, pattern, pattern, pattern)
+	}
+	if opts.Status != "" {
+		switch opts.Status {
+		case "running", "success", "failed", "canceled":
+		default:
+			return nil, fmt.Errorf("invalid history status %q", opts.Status)
+		}
+		statement += ` AND status=?`
+		args = append(args, opts.Status)
+	}
+	if opts.Connection != "" {
+		statement += ` AND (substr(source,1,?)=? OR substr(destination,1,?)=?)`
+		prefix := opts.Connection + ":"
+		args = append(args, len(prefix), prefix, len(prefix), prefix)
+	}
+	if !opts.After.IsZero() {
+		statement += ` AND started_at>=?`
+		args = append(args, opts.After.UnixNano())
+	}
+	if !opts.Before.IsZero() {
+		statement += ` AND started_at<?`
+		args = append(args, opts.Before.UnixNano())
 	}
 	statement += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, limit)

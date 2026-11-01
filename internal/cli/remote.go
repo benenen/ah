@@ -13,7 +13,7 @@ import (
 )
 
 func (a *app) sshOptions(cmd *cobra.Command) sshclient.Options {
-	opts := sshclient.Options{KnownHosts: a.knownHosts, Timeout: a.timeout, Term: a.term}
+	opts := sshclient.Options{KeepAlive: a.keepAlive, KnownHosts: a.knownHosts, Timeout: a.timeout, Term: a.term}
 	input, ok := cmd.InOrStdin().(*os.File)
 	terminal := ok && term.IsTerminal(int(input.Fd()))
 	if terminal {
@@ -50,7 +50,7 @@ func (a *app) connectCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		client, err := sshclient.Dial(cmd.Context(), c, a.connectionSSHOptions(cmd, args[0], c, true))
+		client, err := a.dialSSH(cmd.Context(), cmd, args[0], c, a.connectionSSHOptions(cmd, args[0], c, true), true)
 		if err != nil {
 			return err
 		}

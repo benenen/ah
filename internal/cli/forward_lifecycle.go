@@ -43,6 +43,9 @@ func (a *app) captureForwardOptions(r *forward.Record) error {
 	}
 	r.WorkDir, err = os.Getwd()
 	r.Timeout = a.timeout
+	r.KeepAlive = a.keepAlive
+	r.ContinueOnError = a.forwardContinue
+	r.Reconnect = a.forwardReconnect
 	return err
 }
 
@@ -171,8 +174,21 @@ func (a *app) forwardStartCommand(restart bool) *cobra.Command {
 			if !cmd.Flags().Changed("timeout") && r.Timeout > 0 {
 				options.timeout = r.Timeout
 			}
+			if !cmd.Flags().Changed("keepalive") {
+				options.keepAlive = r.KeepAlive
+			}
+			if !cmd.Flags().Changed("continue-on-error") {
+				options.forwardContinue = r.ContinueOnError
+			}
+			if !cmd.Flags().Changed("reconnect") {
+				options.forwardReconnect = r.Reconnect
+			}
 			// Validate configuration before stopping a working forward.
-			if _, err := options.connection(r.Name); err != nil {
+			c, err := options.connection(r.Name)
+			if err != nil {
+				return err
+			}
+			if _, err := options.resolveSSHRoute(r.Name, c); err != nil {
 				return err
 			}
 			if restart && (r.Status == "running" || r.Status == "starting") {

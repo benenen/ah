@@ -180,6 +180,9 @@ func (c *Client) sudoSFTP() (*sftp.Client, error) {
 		action = "exec " + shellQuote(c.sftpServer)
 	}
 	stream, err := c.startSudo(ctx, session, action, io.Discard, false)
+	if c.observe != nil {
+		c.observe("sudo", err)
+	}
 	if err != nil {
 		session.Close()
 		return nil, err

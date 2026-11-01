@@ -217,7 +217,7 @@ ah cp --backup ./app.conf nas:/etc/app/  # 覆盖前备份旧文件
 
 复制失败不报告成功；能连通时清理临时文件。断线或取消导致无法清理时，错误会指出可能残留的 `.ah-copy-*` 路径。传输完成但发布响应丢失时，目标可能已经存在，应检查目标后再重试。
 
-支持普通文件和目录（`-r`）；跳板机和断点续传尚未实现。
+支持普通文件和目录（`-r`），并支持命名 SSH 跳板机和 `--resume` 断点续传。
 
 ### 目录复制
 
@@ -373,3 +373,71 @@ ah h clean --failed --keep-days 7  # 仅删除 7 天前的失败记录
 ### 查看单个连接详情
 
 `ah inspect 108` 以 JSON 显示连接地址、认证配置状态、代理链、sudo 和 TERM 等信息。密码及代理认证信息隐藏，私钥仅显示路径；命令只读取本地配置，不连接服务器。
+
+### 复制、重命名连接与结构化查询
+
+```sh
+ah clone dev staging       # 保留 dev，复制为 staging
+ah rename staging prod     # 将 staging 改名为 prod
+ah list --json
+ah history --json --status failed --connection prod --limit 50
+ah history --after 2026-01-01T00:00:00Z --before 2026-02-01T00:00:00Z
+```
+
+clone/rename 拒绝覆盖已有别名，SSH 和 sudo 密码会按新别名重新加密；主密钥缺失或解密失败时不修改配置。已有历史和转发记录保留原连接名，不随改名更新。
+
+list 的 JSON 只包含 name、host、port、user、term；history 的 JSON 为记录数组，空结果为 `[]`。历史筛选先于 limit 生效，连接名精确匹配源或目标的别名，时间按开始时间筛选，after 包含边界，before 不包含边界，均使用 RFC3339。
+
+### 复制预览与排除
+
+```sh
+ah cp -r --backup --dry-run ./site nas:/var/www/
+ah cp -r --exclude .git --exclude '*.log' --exclude 'build/' ./site nas:/var/www/
+```
+
+`--dry-run` 查询文件并比较内容，显示最终落点与 mkdir、merge、add、replace、unchanged、exclude、skip-special、backup、prune-backup 操作，不修改复制目标、不生成备份、不写复制历史。预览仍需正常 SSH 认证，首次主机信任按既有规则处理。它反映查询时的状态，正式复制时会重新检查；不能保证之后的写权限或空间足够。
+
+`--exclude` 可重复，仅用于 `-r`。模式使用 `/` 分隔，按 Go path.Match 匹配；不含斜杠的模式匹配任意层级的文件名，含斜杠的模式相对源目录匹配，尾部 `/` 只匹配目录。命中目录时不再遍历其子项。`*` 不跨越斜杠，`**` 不表示递归通配；不支持绝对路径、`..` 路径段或反斜杠。排除项不计入进度和复制字节，规则会保存到历史并用于重跑。
+
+### 连接诊断与保活
+
+```sh
+ah doctor nas
+ah --keepalive 30s forward nas 15432 5432 --continue-on-error -d
+```
+
+`doctor` 按阶段报告配置、认证资料、TCP 或代理链、SSH 密钥交换、主机密钥校验、认证、sudo、SFTP 与复制所需扩展的检查结果，失败返回非零。sudo 未开启时跳过。它正常校验主机身份，首次连接仍需信任确认；SFTP 初始化也受超时限制。不创建测试文件，因此不验证具体目标目录的写权限或磁盘空间。
+
+`--keepalive DURATION` 定期发送 SSH 保活请求，默认 0 关闭；等待回复超过 `--timeout` 时关闭失去响应的 SSH 连接。服务端返回“不支持此请求”也算有效回复。`forward --continue-on-error` 让 `-L/-R` 的单次目标连接或传输失败只断开该客户端，并将错误写入 stderr（后台运行时写日志），随后继续监听。默认保留遇错结束的行为。SSH 通道打开超时仍需关闭整个 SSH 连接才能解除阻塞。保活与容错选项保存在转发记录中，start/restart 沿用，可显式覆盖。
+
+### 转发自动重连
+
+```sh
+ah --keepalive 20s forward nas 15432 5432 --continue-on-error --reconnect -d
+```
+
+`--reconnect` 在首次启动成功后，转发失败时按 1、2、4 秒递增等待，最多间隔 30 秒重试，直到恢复或被停止。首次启动失败仍立即返回错误。原 ID 和监听地址保持不变，重试使用当前连接配置，不弹认证或信任提示，每次都校验主机密钥。`ls` 保留 running 状态，ERROR 显示 reconnecting 及最近一次断线原因；后台细节见日志。重连期间监听可能不可用，旧 TCP 连接会断开，应用需重新连接。kill、restart 和 rm -f 仍可取消重试。start/restart 继承该选项，可用 `--reconnect=false` 关闭。
+
+### SSH 跳板机
+
+```sh
+ah new bastion --host bastion.example.com --user alice
+ah new private --host 10.0.0.9 --user bob --jump bastion
+ah c private
+ah cp ./config.toml private:~/config.toml
+ah edit private --jump ''       # 恢复直连
+```
+
+`jump` 引用另一个命名连接，通过其 SSH direct-tcpip 通道访问当前目标。跳板连接还可以引用下一层跳板，最多 32 个连接；循环引用或缺失别名在联网前报错。每跳独立使用自己的用户、密钥、密码和主机密钥校验，连接超时逐跳生效。跳板的 sudo 不参与 TCP 通道转发，最终目标仍按自身 sudo 设置执行。当前连接不能同时设置 jump 和 SOCKS5 代理链，可在跳板连接上设置代理。connect、cp、补全、doctor、forward 和历史重跑共用该路径，失败不回退直连；关闭最终连接会关闭所拥有的跳板连接。rename 会同时更新配置内引用旧名称的 jump，历史和转发记录仍保留原名称。
+
+### 断点续传
+
+```sh
+ah cp --resume ./large.tar nas:~/large.tar
+ah cp --resume nas:~/large.tar ./large.tar
+ah cp -r -f --resume ./dataset nas:~/dataset
+```
+
+`--resume` 失败时保留同目录 `.ah-resume-*` 普通文件，并在错误中给出路径。重跑同一源和目标时，先计算源文件 SHA-256，再寻找内容指纹、源路径、目标路径和权限匹配的片段；按长度选取，逐块核对前缀后继续剩余内容。损坏片段明确报错，源内容变化时不复用旧片段，传输期间源内容或时间/大小发生变化时拒绝发布。只有校验完成才按原有 no-clobber、force 或 backup 规则原子发布。目录复制逐文件续传，重跑已部分完成的目录需 `-f` 或 `--backup` 合并。历史 show/run 保留 resume 选项。
+
+每次重试使用独立临时文件，旧片段只读，避免并发重试修改已发布文件。已校验前缀会复制到新临时文件；为了完整性校验，源文件会完整预读一次，远端片段也需要读取。因此续传会增加读取与临时空间成本，不保证节省网络流量。成功时清理本次临时文件，历史失败片段保留以免影响其他重试，确认不再需要后可手工删除错误里给出的片段。`--dry-run --resume` 只读校验片段，并以 resume-prefix 操作显示复用来源。

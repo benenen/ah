@@ -141,6 +141,8 @@ func (a *app) forwardCommand() *cobra.Command {
 			return a.runForward(cmd, record, ready, unlock)
 		},
 	}
+	cmd.PersistentFlags().BoolVar(&a.forwardReconnect, "reconnect", false, "reconnect after a running forward fails, with exponential backoff")
+	cmd.PersistentFlags().BoolVar(&a.forwardContinue, "continue-on-error", false, "keep listening after an individual target or relay failure")
 	cmd.Flags().BoolVarP(&daemon, "daemon", "d", false, "run in the background and print the generated ID")
 	cmd.Flags().BoolVarP(&dynamic, "dynamic", "D", false, "run a local SOCKS5 proxy whose connections the SSH server makes")
 	cmd.Flags().BoolVarP(&remote, "remote", "R", false, "listen on the SSH server and forward connections to a local target")
@@ -249,19 +251,31 @@ func (a *app) runForward(cmd *cobra.Command, record forward.Record, ready *os.Fi
 		if err != nil {
 			return fmt.Errorf("listen for forwarding: %w", err)
 		}
-		defer func() { _ = listener.Close() }()
+		defer func() {
+			if listener != nil {
+				_ = listener.Close()
+			}
+		}()
 	}
-	client, err := sshclient.Dial(ctx, connection, a.connectionSSHOptions(cmd, record.Name, connection, true))
+	client, err := a.dialSSH(ctx, cmd, record.Name, connection, a.connectionSSHOptions(cmd, record.Name, connection, true), true)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if client != nil {
+			_ = client.Close()
+		}
+	}()
 	if kind == forward.Remote {
 		listener, err = client.ListenRemote(ctx, record.Listen)
 		if err != nil {
 			return err
 		}
-		defer func() { _ = listener.Close() }()
+		defer func() {
+			if listener != nil {
+				_ = listener.Close()
+			}
+		}()
 	}
 	record.Listen = listener.Addr().String()
 	reg.Record.Listen = record.Listen
@@ -297,21 +311,48 @@ func (a *app) runForward(cmd *cobra.Command, record forward.Record, ready *os.Fi
 			return err
 		}
 	}
-	switch kind {
-	case forward.Dynamic:
-		// Per-request failures go to stderr, which is the log file for a daemon.
-		var mu sync.Mutex
-		stderr := cmd.ErrOrStderr()
-		err = client.ForwardDynamic(ctx, listener, func(requestErr error) {
-			mu.Lock()
-			defer mu.Unlock()
-			_, _ = fmt.Fprintf(stderr, "%s %v\n", time.Now().Format(time.RFC3339), requestErr)
-		})
-	case forward.Remote:
-		err = client.ForwardRemote(ctx, listener, record.Target)
-	default:
-		err = client.ForwardLocal(ctx, listener, record.Target)
+	var reportMu sync.Mutex
+	report := func(requestErr error) {
+		reportMu.Lock()
+		defer reportMu.Unlock()
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s %v\n", time.Now().Format(time.RFC3339), requestErr)
 	}
+	options := sshclient.ForwardOptions{ContinueOnError: record.ContinueOnError, Report: report}
+
+	for {
+		switch kind {
+		case forward.Dynamic:
+			err = client.ForwardDynamic(ctx, listener, report)
+		case forward.Remote:
+			err = client.ForwardRemote(ctx, listener, record.Target, options)
+		default:
+			err = client.ForwardLocal(ctx, listener, record.Target, options)
+		}
+		if !record.Reconnect || ctx.Err() != nil {
+			break
+		}
+		reg.Record.Error = "reconnecting: " + err.Error()
+		if saveErr := reg.Record.Save(); saveErr != nil {
+			return errors.Join(err, saveErr)
+		}
+		report(err)
+		err = retryForward(ctx, func() error {
+			var attemptErr error
+			client, listener, attemptErr = a.reopenForward(cmd, record)
+			if attemptErr != nil {
+				report(attemptErr)
+			}
+			return attemptErr
+		})
+		if err != nil {
+			break
+		}
+		reg.Record.Error = ""
+		if err = reg.Record.Save(); err != nil {
+			return err
+		}
+	}
+
 	if errors.Is(err, context.Canceled) && parentCtx.Err() == nil {
 		return nil // A control-channel stop is a normal shutdown.
 	}

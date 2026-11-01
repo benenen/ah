@@ -9,19 +9,36 @@ import (
 	"sync"
 )
 
+// ForwardOptions optionally isolates individual client errors. A blocked SSH
+// channel-open timeout still ends the transport so its goroutine can exit.
+type ForwardOptions struct {
+	ContinueOnError bool
+	Report          func(error)
+}
+
+func forwardFailure(fail context.CancelCauseFunc, err error, options []ForwardOptions) {
+	if len(options) > 0 && options[0].ContinueOnError {
+		if options[0].Report != nil {
+			options[0].Report(err)
+		}
+	} else {
+		fail(err)
+	}
+}
+
 // ForwardLocal serves a TCP listener through SSH until canceled or an error
 // occurs. It owns and closes both the listener and this SSH client. A failed
 // target connection or relay ends the forward.
-func (c *Client) ForwardLocal(ctx context.Context, listener net.Listener, target string) error {
+func (c *Client) ForwardLocal(ctx context.Context, listener net.Listener, target string, options ...ForwardOptions) error {
 	return c.serveForward(ctx, listener, func(ctx context.Context, fail context.CancelCauseFunc, local net.Conn) {
 		remote, err := c.dialRemote(ctx, fail, target)
 		if err != nil {
-			fail(err)
+			forwardFailure(fail, err, options)
 			return
 		}
 		defer func() { _ = remote.Close() }()
 		if err := relayForward(ctx, local, remote); err != nil {
-			fail(fmt.Errorf("forward data: %w", err))
+			forwardFailure(fail, fmt.Errorf("forward data: %w", err), options)
 		}
 	})
 }
@@ -50,16 +67,16 @@ func (c *Client) ListenRemote(ctx context.Context, address string) (net.Listener
 // local target until canceled or an error occurs. It owns and closes both the
 // listener and this SSH client. A failed target connection or relay ends the
 // forward, matching ForwardLocal.
-func (c *Client) ForwardRemote(ctx context.Context, listener net.Listener, target string) error {
+func (c *Client) ForwardRemote(ctx context.Context, listener net.Listener, target string, options ...ForwardOptions) error {
 	return c.serveForward(ctx, listener, func(ctx context.Context, fail context.CancelCauseFunc, remote net.Conn) {
 		local, err := (&net.Dialer{Timeout: c.timeout}).DialContext(ctx, "tcp", target)
 		if err != nil {
-			fail(fmt.Errorf("connect forwarding target %s: %w", target, err))
+			forwardFailure(fail, fmt.Errorf("connect forwarding target %s: %w", target, err), options)
 			return
 		}
 		defer func() { _ = local.Close() }()
 		if err := relayForward(ctx, remote, local); err != nil {
-			fail(fmt.Errorf("forward data: %w", err))
+			forwardFailure(fail, fmt.Errorf("forward data: %w", err), options)
 		}
 	})
 }

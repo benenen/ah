@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/benenen/ah/internal/history"
-	"github.com/benenen/ah/internal/sshclient"
 	"github.com/benenen/ah/internal/transfer"
 	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
@@ -20,14 +19,21 @@ import (
 // copyMode holds the options that change what a copy writes; history stores
 // them so a rerun behaves the same.
 type copyMode struct {
-	Force, Recursive bool
-	BackupKeep       int // 0 disables backups
+	Force, Recursive, Resume bool
+	BackupKeep               int // 0 disables backups
+	Exclude                  []string
 }
 
 func (a *app) copyCommand() *cobra.Command {
 	var mode copyMode
-	var backup bool
+	var backup, dryRun bool
 	cmd := &cobra.Command{Use: "copy SOURCE DESTINATION", Aliases: []string{"cp"}, Short: "Copy a local or NAME:PATH remote file or directory and record its history", Args: cobra.ExactArgs(2), ValidArgsFunction: a.completeRemote, RunE: func(cmd *cobra.Command, args []string) error {
+		if err := transfer.ValidateExcludes(mode.Exclude); err != nil {
+			return err
+		}
+		if len(mode.Exclude) > 0 && !mode.Recursive {
+			return fmt.Errorf("--exclude requires --recursive")
+		}
 		if !backup {
 			mode.BackupKeep = 0
 		} else if mode.BackupKeep < 1 || mode.BackupKeep > 1000 {
@@ -37,8 +43,14 @@ func (a *app) copyCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if dryRun {
+			return a.previewCopy(cmd, args[0], args[1], mode, cwd)
+		}
 		return a.copyWithHistory(cmd, args[0], args[1], mode, cwd)
 	}}
+	cmd.Flags().BoolVar(&mode.Resume, "resume", false, "retain and verify partial files for resumable copying")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview destination changes without copying or recording history")
+	cmd.Flags().StringArrayVar(&mode.Exclude, "exclude", nil, "exclude a relative glob (repeatable, requires --recursive)")
 	cmd.Flags().BoolVarP(&mode.Force, "force", "f", false, "atomically replace existing destination files; with -r, merge into an existing directory")
 	cmd.Flags().BoolVarP(&mode.Recursive, "recursive", "r", false, "copy a directory tree (symbolic links and special files are skipped)")
 	cmd.Flags().BoolVar(&backup, "backup", false, "before replacing a file, keep the old one as bak.NAME.bak-TIMESTAMP beside it (implies --force)")
@@ -126,7 +138,7 @@ func (a *app) performCopy(cmd *cobra.Command, source, target string, mode copyMo
 	}
 	defer closeTarget()
 	bar := newProgressBar(cmd.ErrOrStderr())
-	options := transfer.Options{Force: mode.Force, BackupKeep: mode.BackupKeep, Progress: bar.update}
+	options := transfer.Options{Resume: mode.Resume, Force: mode.Force, BackupKeep: mode.BackupKeep, Progress: bar.update}
 	if !mode.Recursive {
 		unchanged := false
 		options.Unchanged = func(string) { unchanged = true }
@@ -135,7 +147,9 @@ func (a *app) performCopy(cmd *cobra.Command, source, target string, mode copyMo
 		return n, nil, unchanged, err
 	}
 	tree := transfer.TreeOptions{
-		Options: options,
+		Options:  options,
+		Exclude:  mode.Exclude,
+		Excluded: func(p string) { bar.finish(); _, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Excluded %s\n", p) },
 		// Two endpoints on one connection name share a filesystem.
 		SameFilesystem: src.Name == dst.Name,
 		Skipped: func(p string, m os.FileMode) {
@@ -190,7 +204,7 @@ func (a *app) openCopyEndpoint(cmd *cobra.Command, e transfer.Endpoint, cwd stri
 	if c.IdentityFile != "" && !filepath.IsAbs(c.IdentityFile) && !strings.HasPrefix(c.IdentityFile, "~") {
 		c.IdentityFile = filepath.Join(cwd, c.IdentityFile)
 	}
-	client, err := sshclient.Dial(cmd.Context(), c, a.connectionSSHOptions(cmd, e.Name, c, true))
+	client, err := a.dialSSH(cmd.Context(), cmd, e.Name, c, a.connectionSSHOptions(cmd, e.Name, c, true), true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -203,7 +217,7 @@ func (a *app) openCopyEndpoint(cmd *cobra.Command, e transfer.Endpoint, cwd stri
 }
 
 func (a *app) copyRecord(source, target string, mode copyMode, cwd string) (history.Record, error) {
-	record := history.Record{Source: source, Destination: target, Force: mode.Force, Recursive: mode.Recursive, BackupKeep: mode.BackupKeep, Cwd: cwd}
+	record := history.Record{Resume: mode.Resume, Exclude: append([]string(nil), mode.Exclude...), Source: source, Destination: target, Force: mode.Force, Recursive: mode.Recursive, BackupKeep: mode.BackupKeep, Cwd: cwd}
 	store, err := a.store()
 	if err != nil {
 		return record, err
@@ -272,4 +286,36 @@ func (a *app) protectHistoryPath(target string) error {
 		}
 	}
 	return nil
+}
+
+func (a *app) previewCopy(cmd *cobra.Command, source, target string, mode copyMode, cwd string) error {
+	src, err := resolveCopyEndpoint(source, cwd)
+	if err != nil {
+		return err
+	}
+	dst, err := resolveCopyEndpoint(target, cwd)
+	if err != nil {
+		return err
+	}
+	if err := a.protectHistoryDestination(src, dst); err != nil {
+		return err
+	}
+	sc, closeSource, err := a.openCopyEndpoint(cmd, src, cwd)
+	if err != nil {
+		return fmt.Errorf("source: %w", err)
+	}
+	defer closeSource()
+	tc, closeTarget, err := a.openCopyEndpoint(cmd, dst, cwd)
+	if err != nil {
+		return fmt.Errorf("destination: %w", err)
+	}
+	defer closeTarget()
+	opts := transfer.TreeOptions{Options: transfer.Options{Resume: mode.Resume, Force: mode.Force, BackupKeep: mode.BackupKeep}, Exclude: mode.Exclude, SameFilesystem: src.Name == dst.Name}
+	if dst.Name == "" {
+		opts.CheckTarget = a.protectHistoryPath
+	}
+	return transfer.Plan(cmd.Context(), sc, tc, src.Path, dst.Path, mode.Recursive, opts, func(e transfer.PlanEntry) error {
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%q -> %q\n", e.Action, e.Source, e.Target)
+		return err
+	})
 }

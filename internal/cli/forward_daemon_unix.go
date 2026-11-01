@@ -29,7 +29,7 @@ func (a *app) startForwardDaemon(cmd *cobra.Command, record forward.Record) erro
 	if err != nil {
 		return err
 	}
-	args := []string{"--config", configPath, "--timeout", a.timeout.String()}
+	args := []string{"--config", configPath, "--timeout", a.timeout.String(), "--keepalive", record.KeepAlive.String()}
 	for _, option := range [][2]string{{"--known-hosts", record.KnownHosts}, {"--key-file", record.KeyPath}} {
 		if option[1] != "" {
 			args = append(args, option[0], option[1])
@@ -45,6 +45,12 @@ func (a *app) startForwardDaemon(cmd *cobra.Command, record forward.Record) erro
 		args = append(args, "forward", record.Name, record.Listen, record.Target, "--remote")
 	default:
 		args = append(args, "forward", record.Name, record.Listen, record.Target)
+	}
+	if record.Reconnect {
+		args = append(args, "--reconnect")
+	}
+	if record.ContinueOnError {
+		args = append(args, "--continue-on-error")
 	}
 	args = append(args, "--forward-worker", record.ID)
 	read, write, err := os.Pipe()

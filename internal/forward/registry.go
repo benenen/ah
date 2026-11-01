@@ -27,21 +27,24 @@ const (
 )
 
 type Record struct {
-	ID         string
-	Type       string `json:",omitempty"`
-	Name       string
-	Listen     string
-	Target     string
-	PID        int
-	Status     string
-	Started    time.Time
-	Error      string        `json:",omitempty"`
-	Socket     string        `json:",omitempty"`
-	ConfigPath string        `json:",omitempty"`
-	KeyPath    string        `json:",omitempty"`
-	KnownHosts string        `json:",omitempty"`
-	WorkDir    string        `json:",omitempty"`
-	Timeout    time.Duration `json:",omitempty"`
+	Reconnect       bool `json:",omitempty"`
+	ContinueOnError bool `json:",omitempty"`
+	ID              string
+	Type            string `json:",omitempty"`
+	Name            string
+	Listen          string
+	Target          string
+	PID             int
+	Status          string
+	Started         time.Time
+	Error           string        `json:",omitempty"`
+	Socket          string        `json:",omitempty"`
+	ConfigPath      string        `json:",omitempty"`
+	KeyPath         string        `json:",omitempty"`
+	KnownHosts      string        `json:",omitempty"`
+	WorkDir         string        `json:",omitempty"`
+	KeepAlive       time.Duration `json:",omitempty"`
+	Timeout         time.Duration `json:",omitempty"`
 }
 
 // Kind returns the forward type, treating an untyped record as Local.

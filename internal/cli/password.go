@@ -108,7 +108,7 @@ func (a *app) promptStoredPassword(cmd *cobra.Command, name, prompt string) (str
 }
 
 func (a *app) connectionSSHOptions(cmd *cobra.Command, name string, c config.Connection, interactive bool) sshclient.Options {
-	opts := sshclient.Options{KnownHosts: a.knownHosts, Timeout: a.timeout}
+	opts := sshclient.Options{KeepAlive: a.keepAlive, KnownHosts: a.knownHosts, Timeout: a.timeout}
 	if interactive {
 		opts = a.sshOptions(cmd)
 	}

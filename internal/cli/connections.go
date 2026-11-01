@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"text/tabwriter"
 
@@ -9,10 +10,26 @@ import (
 )
 
 func (a *app) listCommand() *cobra.Command {
-	return &cobra.Command{Use: "list", Aliases: []string{"ls"}, Short: "List saved connections", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: "list", Aliases: []string{"ls"}, Short: "List saved connections", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		entries, err := a.connections()
 		if err != nil {
 			return err
+		}
+		if jsonOutput {
+			type row struct {
+				Name string `json:"name"`
+				Host string `json:"host"`
+				Port int    `json:"port"`
+				User string `json:"user"`
+				Term string `json:"term"`
+			}
+			rows := make([]row, 0, len(entries))
+			for _, name := range sortedNames(entries) {
+				c := entries[name]
+				rows = append(rows, row{name, c.Host, c.Port, c.User, c.Term})
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
 		}
 		out := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 		if _, err = fmt.Fprintln(out, "NAME\tHOST\tPORT\tUSER\tTERM"); err != nil {
@@ -30,8 +47,11 @@ func (a *app) listCommand() *cobra.Command {
 		}
 		return out.Flush()
 	}}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print connections as JSON with credentials hidden")
+	return cmd
 }
 func connectionFlags(cmd *cobra.Command, c *config.Connection) {
+	cmd.Flags().StringVar(&c.Jump, "jump", "", "SSH jump connection alias (empty clears it)")
 	cmd.Flags().BoolVar(&c.Sudo, "sudo", false, "run SSH commands and remote file operations as root")
 	cmd.Flags().StringVar(&c.SFTPServer, "sftp-server", "", "absolute remote SFTP server path for sudo (empty to detect common paths)")
 	cmd.Flags().StringVar(&c.SudoShell, "sudo-shell", "", "login shell for an escalated interactive session (default bash, falls back to /bin/sh)")
@@ -125,6 +145,9 @@ func (a *app) editCommand() *cobra.Command {
 			c, ok := m[args[0]]
 			if !ok {
 				return fmt.Errorf("connection %q does not exist", args[0])
+			}
+			if cmd.Flags().Changed("jump") {
+				c.Jump = changes.Jump
 			}
 			if cmd.Flags().Changed("sudo") {
 				c.Sudo = changes.Sudo

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/benenen/ah/internal/config"
 	"github.com/benenen/ah/internal/history"
 	"github.com/spf13/cobra"
 )
@@ -27,15 +29,46 @@ func (a *app) openHistory() (*history.Store, error) {
 }
 func (a *app) historyCommand() *cobra.Command {
 	limit := 20
+	var jsonOutput bool
+	var status, connection, after, before string
 	search := func(cmd *cobra.Command, args []string) error {
 		store, err := a.openHistory()
 		if err != nil {
 			return err
 		}
 		defer store.Close()
-		records, err := store.Search(cmd.Context(), strings.Join(args, " "), limit)
+		opts := history.SearchOptions{Status: status, Connection: connection}
+		if connection != "" {
+			if err := config.ValidateName(connection); err != nil {
+				return err
+			}
+		}
+		for _, bound := range []struct {
+			raw  string
+			dest *time.Time
+		}{{after, &opts.After}, {before, &opts.Before}} {
+			raw, dest := bound.raw, bound.dest
+			if raw == "" {
+				continue
+			}
+			parsed, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return fmt.Errorf("history time must be RFC3339: %w", err)
+			}
+			*dest = parsed
+		}
+		if !opts.After.IsZero() && !opts.Before.IsZero() && !opts.After.Before(opts.Before) {
+			return fmt.Errorf("--after must precede --before")
+		}
+		records, err := store.SearchFiltered(cmd.Context(), strings.Join(args, " "), limit, opts)
 		if err != nil {
 			return err
+		}
+		if jsonOutput {
+			if records == nil {
+				records = []history.Record{}
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(records)
 		}
 		out := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 		if _, err = fmt.Fprintln(out, "ID\tSTARTED (UTC)\tSTATUS\tBYTES\tFORCE\tSOURCE\tDESTINATION\tERROR"); err != nil {
@@ -49,6 +82,11 @@ func (a *app) historyCommand() *cobra.Command {
 		return out.Flush()
 	}
 	cmd := &cobra.Command{Use: "history [QUERY...]", Aliases: []string{"h"}, Short: "Search copy history by keywords", RunE: search}
+	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "print records as JSON")
+	cmd.PersistentFlags().StringVar(&status, "status", "", "exact status: running, success, failed, canceled")
+	cmd.PersistentFlags().StringVar(&connection, "connection", "", "exact source or destination connection alias")
+	cmd.PersistentFlags().StringVar(&after, "after", "", "inclusive start time (RFC3339)")
+	cmd.PersistentFlags().StringVar(&before, "before", "", "exclusive start time (RFC3339)")
 	cmd.PersistentFlags().IntVar(&limit, "limit", 20, "maximum history records (1-1000)")
 	cmd.AddCommand(&cobra.Command{Use: "search [QUERY...]", Short: "Search source, destination, status and errors", RunE: search})
 	cmd.AddCommand(&cobra.Command{Use: "show ID", Short: "Print a safely quoted command for a history entry", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -108,7 +146,7 @@ func (a *app) historyCommand() *cobra.Command {
 			record.Force = force
 		}
 		// Structured invocation, never shell evaluation of data from SQLite.
-		return replay.copyWithHistory(cmd, record.Source, record.Destination, copyMode{Force: record.Force, Recursive: record.Recursive, BackupKeep: record.BackupKeep}, record.Cwd)
+		return replay.copyWithHistory(cmd, record.Source, record.Destination, copyMode{Resume: record.Resume, Force: record.Force, Recursive: record.Recursive, BackupKeep: record.BackupKeep, Exclude: record.Exclude}, record.Cwd)
 	}}
 	run.Flags().BoolVarP(&force, "force", "f", false, "override recorded overwrite behavior (use --force=false to prevent replacement)")
 	cmd.AddCommand(run)
@@ -163,6 +201,12 @@ func historyShellCommand(r history.Record, historyPath string) (string, error) {
 	}
 	if r.BackupKeep > 0 {
 		args = append(args, "--backup", "--backup-keep", strconv.Itoa(r.BackupKeep))
+	}
+	if r.Resume {
+		args = append(args, "--resume")
+	}
+	for _, pattern := range r.Exclude {
+		args = append(args, "--exclude", pattern)
 	}
 	args = append(args, "--", source, target)
 	for i := 1; i < len(args); i++ {

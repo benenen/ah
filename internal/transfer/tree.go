@@ -15,6 +15,8 @@ import (
 // TreeOptions extend Options for recursive copies.
 type TreeOptions struct {
 	Options
+	Exclude  []string
+	Excluded func(string)
 	// SameFilesystem reports that source and target are on one filesystem, so a
 	// target inside the source tree would copy the tree into itself.
 	SameFilesystem bool
@@ -50,6 +52,9 @@ type treeEntry struct {
 // Each file is published atomically, but the tree is not: after a failure the
 // files already copied remain, and a rerun needs Force to merge over them.
 func CopyTree(ctx context.Context, src, dst *sftp.Client, source, target string, opts TreeOptions) (result TreeResult, err error) {
+	if err = ValidateExcludes(opts.Exclude); err != nil {
+		return result, err
+	}
 	if err = ctx.Err(); err != nil {
 		return result, err
 	}
@@ -136,6 +141,12 @@ func CopyTree(ctx context.Context, src, dst *sftp.Client, source, target string,
 		sort.Slice(children, func(i, j int) bool { return children[i].Name() < children[j].Name() })
 		for _, child := range children {
 			childRel := path.Join(rel, child.Name())
+			if excluded(childRel, child.IsDir(), opts.Exclude) {
+				if opts.Excluded != nil {
+					opts.Excluded(sourceFS.below(source, childRel))
+				}
+				continue
+			}
 			switch mode := child.Mode(); {
 			case mode.IsDir():
 				entries = append(entries, treeEntry{rel: childRel, mode: mode})

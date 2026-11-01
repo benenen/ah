@@ -22,6 +22,13 @@ import (
 )
 
 type Options struct {
+	parent    *Client
+	transport func(context.Context, string) (net.Conn, error)
+	KeepAlive time.Duration
+
+	// Observe receives completed diagnostic stages synchronously; it must not block.
+	Observe func(stage string, err error)
+
 	SudoPassword func(context.Context) ([]byte, error)
 	PasswordOnly bool
 	KnownHosts   string
@@ -40,6 +47,11 @@ type Options struct {
 }
 
 type Client struct {
+	parent *Client
+	done   chan struct{}
+
+	observe func(string, error)
+
 	ctx          context.Context
 	timeout      time.Duration
 	sudo         bool
@@ -66,6 +78,12 @@ func expandHome(path string) (string, error) {
 }
 
 func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, error) {
+	if c.Jump != "" && opts.transport == nil {
+		return nil, fmt.Errorf("jump connection requires a verified jump transport")
+	}
+	if opts.KeepAlive < 0 {
+		return nil, fmt.Errorf("keepalive interval must not be negative")
+	}
 	if opts.Timeout <= 0 {
 		opts.Timeout = 10 * time.Second
 	}
@@ -100,17 +118,35 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 	defer cancelHandshake(nil)
 	handshakeTimer := time.AfterFunc(time.Until(deadline), func() { cancelHandshake(context.DeadlineExceeded) })
 	defer handshakeTimer.Stop()
+	report := func(stage string, err error) {
+		if opts.Observe != nil {
+			opts.Observe(stage, err)
+		}
+	}
 	auth, agentConn, err := authentication(dialCtx, c, opts)
 	if err != nil {
+		report("authentication-setup", err)
 		return nil, err
 	}
+	report("authentication-setup", nil)
 	if agentConn != nil {
 		defer agentConn.Close()
 		agentStop := context.AfterFunc(handshakeCtx, func() { agentConn.Close() })
 		defer agentStop()
 	}
 	address := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
-	conn, err := dialTransport(dialCtx, address, c.ProxyChain())
+	transportStage := "tcp"
+	if len(c.ProxyChain()) > 0 {
+		transportStage = "proxy-chain"
+	}
+	var conn net.Conn
+	if opts.transport != nil {
+		transportStage = "ssh-jump"
+		conn, err = opts.transport(dialCtx, address)
+	} else {
+		conn, err = dialTransport(dialCtx, address, c.ProxyChain())
+	}
+	report(transportStage, err)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", address, err)
 	}
@@ -123,8 +159,26 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		return nil, err
 	}
 	clock := &handshakeClock{timer: handshakeTimer, conn: conn, agentConn: agentConn, deadline: deadline}
-	cfg := &ssh.ClientConfig{User: c.User, Auth: auth, HostKeyCallback: hostKeyCallback(handshakeCtx, opts, clock)}
+	verified, keySeen := false, false
+	checkKey := hostKeyCallback(handshakeCtx, opts, clock)
+	cfg := &ssh.ClientConfig{User: c.User, Auth: auth, HostKeyCallback: func(host string, remote net.Addr, key ssh.PublicKey) error {
+		keySeen = true
+		report("ssh-key-exchange", nil)
+		err := checkKey(host, remote, key)
+		report("host-key", err)
+		verified = err == nil
+		return err
+	}}
 	sc, ch, reqs, err := ssh.NewClientConn(conn, address, cfg)
+	if err != nil {
+		if verified {
+			report("authentication", err)
+		} else if !keySeen {
+			report("ssh-key-exchange", err)
+		}
+	} else {
+		report("authentication", nil)
+	}
 	if err != nil {
 		stop()
 		conn.Close()
@@ -150,7 +204,11 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 	if terminal == "" {
 		terminal = c.Term
 	}
-	return &Client{client: ssh.NewClient(sc, ch, reqs), conn: conn, stop: stop, ctx: ctx, timeout: opts.Timeout, sudo: c.Sudo, sftpServer: c.SFTPServer, sudoShell: c.SudoShell, term: terminal, sudoPassword: opts.SudoPassword}, nil
+	client := &Client{parent: opts.parent, done: make(chan struct{}), observe: opts.Observe, client: ssh.NewClient(sc, ch, reqs), conn: conn, stop: stop, ctx: ctx, timeout: opts.Timeout, sudo: c.Sudo, sftpServer: c.SFTPServer, sudoShell: c.SudoShell, term: terminal, sudoPassword: opts.SudoPassword}
+	if opts.KeepAlive > 0 {
+		go client.keepAlive(opts.KeepAlive)
+	}
+	return client, nil
 }
 
 func authentication(ctx context.Context, c config.Connection, opts Options) ([]ssh.AuthMethod, net.Conn, error) {
@@ -382,6 +440,15 @@ func (c *Client) SFTP() (*sftp.Client, error) {
 	return sftp.NewClient(c.client)
 }
 func (c *Client) Close() error {
-	c.once.Do(func() { c.stop(); c.closeErr = c.client.Close() })
+	c.once.Do(func() {
+		if c.done != nil {
+			close(c.done)
+		}
+		c.stop()
+		c.closeErr = c.client.Close()
+		if c.parent != nil {
+			c.closeErr = errors.Join(c.closeErr, c.parent.Close())
+		}
+	})
 	return c.closeErr
 }

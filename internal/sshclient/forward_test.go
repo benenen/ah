@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -436,4 +437,137 @@ func TestListenRemoteRejected(t *testing.T) {
 		_ = listener.Close()
 		t.Fatal("rejected tcpip-forward succeeded")
 	}
+}
+
+func TestForwardLocalContinuesAfterTargetFailure(t *testing.T) {
+	var calls atomic.Int32
+	server := testutil.StartForwardSSH(t, func(ch ssh.NewChannel) {
+		if calls.Add(1) == 1 {
+			_ = ch.Reject(ssh.ConnectionFailed, "target restarting")
+			return
+		}
+		channel, requests, err := ch.Accept()
+		if err != nil {
+			return
+		}
+		defer channel.Close()
+		go ssh.DiscardRequests(requests)
+		_, _ = io.Copy(channel, channel)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c, err := sshclient.Dial(ctx, server.Connection, sshclient.Options{KnownHosts: server.KnownHosts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reported := make(chan error, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- c.ForwardLocal(ctx, listener, "target.internal:80", sshclient.ForwardOptions{ContinueOnError: true, Report: func(err error) { reported <- err }})
+	}()
+	first, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	select {
+	case <-reported:
+	case <-time.After(time.Second):
+		t.Fatal("missing per-client error")
+	}
+	second, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	_ = second.SetDeadline(time.Now().Add(time.Second))
+	if _, err := second.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 2)
+	if _, err := io.ReadFull(second, buf); err != nil || string(buf) != "ok" {
+		t.Fatal("listener did not recover", err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cancel did not release forwarding")
+	}
+}
+
+func TestForwardRemoteContinuesAfterTargetFailure(t *testing.T) {
+	server := testutil.StartRemoteForwardSSH(t, nil)
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := target.Addr().String()
+	_ = target.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c, err := sshclient.Dial(ctx, server.Connection, sshclient.Options{KnownHosts: server.KnownHosts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	listener, err := c.ListenRemote(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reported := make(chan error, 2)
+	done := make(chan error, 1)
+	go func() {
+		done <- c.ForwardRemote(ctx, listener, address, sshclient.ForwardOptions{ContinueOnError: true, Report: func(err error) { reported <- err }})
+	}()
+	first, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	select {
+	case <-reported:
+	case <-time.After(time.Second):
+		t.Fatal("target failure not reported")
+	}
+	target, err = net.Listen("tcp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	echoDone := make(chan struct{})
+	go func() {
+		defer close(echoDone)
+		conn, err := target.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = io.Copy(conn, conn)
+	}()
+	second, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = second.SetDeadline(time.Now().Add(time.Second))
+	if _, err := second.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 2)
+	if _, err := io.ReadFull(second, buf); err != nil || string(buf) != "ok" {
+		t.Fatal("remote listener failed to recover", err)
+	}
+	_ = second.Close()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("forward did not stop")
+	}
+	<-echoDone
 }

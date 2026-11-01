@@ -12,13 +12,16 @@ import (
 )
 
 type app struct {
-	configPath   string
-	historyPath  string
-	keyPath      string
-	knownHosts   string
-	term         string
-	timeout      time.Duration
-	trustNewHost bool
+	forwardReconnect bool
+	configPath       string
+	historyPath      string
+	keyPath          string
+	knownHosts       string
+	term             string
+	timeout          time.Duration
+	keepAlive        time.Duration
+	forwardContinue  bool
+	trustNewHost     bool
 }
 
 func New() *cobra.Command {
@@ -29,15 +32,19 @@ func New() *cobra.Command {
 	root.PersistentFlags().StringVar(&a.keyPath, "key-file", "", "password encryption key file (default: user config directory/ah/master.key)")
 	root.PersistentFlags().StringVar(&a.knownHosts, "known-hosts", "", "SSH known_hosts file (default: ~/.ssh/known_hosts)")
 	root.PersistentFlags().StringVar(&a.term, "term", "", "TERM for interactive sessions, overriding the connection's saved value and $TERM")
+	root.PersistentFlags().DurationVar(&a.keepAlive, "keepalive", 0, "SSH keepalive interval (0 disables; replies bounded by --timeout)")
 	root.PersistentFlags().DurationVar(&a.timeout, "timeout", 10*time.Second, "SSH connection and handshake timeout")
 	root.PersistentFlags().BoolVar(&a.trustNewHost, "trust-new-host", false, "trust and save unknown host keys without prompting (changed keys still fail)")
 	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+		if a.keepAlive < 0 {
+			return fmt.Errorf("--keepalive must not be negative")
+		}
 		if a.timeout <= 0 {
 			return fmt.Errorf("--timeout must be positive")
 		}
 		return nil
 	}
-	root.AddCommand(a.listCommand(), a.inspectCommand(), a.newCommand(), a.editCommand(), a.removeCommand(), a.connectCommand(), a.forwardCommand(), a.copyCommand(), a.backupCommand(), a.historyCommand(), completionCommand(), versionCommand())
+	root.AddCommand(a.doctorCommand(), a.connectionCopyCommand(false), a.connectionCopyCommand(true), a.listCommand(), a.inspectCommand(), a.newCommand(), a.editCommand(), a.removeCommand(), a.connectCommand(), a.forwardCommand(), a.copyCommand(), a.backupCommand(), a.historyCommand(), completionCommand(), versionCommand())
 	for _, command := range root.Commands() {
 		if len(command.Aliases) > 0 {
 			command.Short += " (alias: " + strings.Join(command.Aliases, ", ") + ")"

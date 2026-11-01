@@ -19,6 +19,7 @@ import (
 )
 
 type Connection struct {
+	Jump string `toml:"jump,omitempty"`
 	// Proxy retains compatibility with existing single-proxy configurations.
 	Proxy        string `toml:"proxy,omitempty"`
 	Sudo         bool   `toml:"sudo,omitempty"`
@@ -59,6 +60,14 @@ func ValidateName(name string) error {
 }
 
 func (c Connection) Validate() error {
+	if c.Jump != "" {
+		if err := ValidateName(c.Jump); err != nil {
+			return fmt.Errorf("invalid jump: %w", err)
+		}
+		if len(c.ProxyChain()) > 0 {
+			return fmt.Errorf("jump and proxies are mutually exclusive; configure proxies on the jump connection")
+		}
+	}
 	if c.SudoPassword != "" {
 		if err := credentials.Validate(c.SudoPassword); err != nil {
 			return fmt.Errorf("invalid encrypted sudo password: %w", err)

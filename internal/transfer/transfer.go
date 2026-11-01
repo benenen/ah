@@ -97,6 +97,7 @@ func Copy(ctx context.Context, src, dst *sftp.Client, source, target string, opt
 
 // Options control how Copy and CopyTree publish destination files.
 type Options struct {
+	Resume bool
 	// Force replaces existing destination files; for CopyTree it also merges
 	// into an existing destination directory.
 	Force bool
@@ -217,6 +218,9 @@ func copyOrSkip(ctx context.Context, sourceFS, targetFS filesystem, source, targ
 		}
 	} else if !os.IsNotExist(statErr) {
 		return 0, fmt.Errorf("stat destination: %w", statErr)
+	}
+	if opts.Resume {
+		return resumeFile(ctx, targetFS, source, target, in, info, opts, progress, &inputClosed)
 	}
 	tmp := targetFS.join(targetFS.dir(target), ".ah-copy-"+rand.Text())
 	out, err := targetFS.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)

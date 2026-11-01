@@ -34,6 +34,7 @@ func TestLab(t *testing.T) {
 		{"CopyFile", testCopyFile},
 		{"CopyTree", testCopyTree},
 		{"History", testHistory},
+		{"FeatureExtensions", testFeatureExtensions},
 		{"Forwards", testForwards},
 		{"SudoWithoutPassword", testSudoWithoutPassword},
 		{"SudoWithPassword", testSudoWithPassword},
@@ -326,7 +327,7 @@ func testForwards(t *testing.T, l *lab) {
 
 	// -D: names resolve on the bastion, and one bad target leaves the proxy up.
 	socksPort := freePort(t)
-	socksID := strings.TrimSpace(l.ok("f", "lab", socksPort, "-D", "-d"))
+	socksID := strings.TrimSpace(l.ok("--keepalive", "100ms", "f", "lab", socksPort, "-D", "--continue-on-error", "--reconnect", "-d"))
 	dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:"+socksPort, nil, proxy.Direct)
 	if err != nil {
 		t.Fatal(err)
@@ -349,6 +350,8 @@ func testForwards(t *testing.T, l *lab) {
 	if len(logs) != 1 || !strings.Contains(readFile(t, logs[0]), "missing.internal:8080") {
 		t.Fatalf("failed SOCKS request not logged: %v", logs)
 	}
+
+	checkForwardOptions(t, l, socksID, true)
 
 	// -R: the bastion reaches a server that only listens on this machine.
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -403,6 +406,9 @@ func testForwards(t *testing.T, l *lab) {
 	if got := httpGet(t, viaSOCKS, "http://web.internal:8080/"); got != "internal-web-ok" {
 		t.Fatalf("restarted -D body %q", got)
 	}
+	checkForwardOptions(t, l, socksID, true)
+	l.ok("f", "restart", socksID, "--continue-on-error=false", "--reconnect=false", "--keepalive", "0s")
+	checkForwardOptions(t, l, socksID, false)
 	l.ok("f", "restart", remoteID)
 	if got := l.remote("lab", "wget -qO- http://127.0.0.1:"+remotePort+"/"); got != "from-the-laptop" {
 		t.Fatalf("restarted -R body %q", got)
@@ -459,6 +465,7 @@ func testSudoWithPassword(t *testing.T, l *lab) {
 	l.ok("edit", "ops", "--sudo")
 	// A password-protected sudo cannot prompt without a terminal.
 	l.fails("sudo needs a password", "c", "ops", "id -u")
+	l.fails("", "doctor", "ops")
 	term := l.terminal("edit", "ops", "--sudo-password")
 	term.expect("sudo password:")
 	term.send(opsPassword + "\n")
@@ -467,6 +474,9 @@ func testSudoWithPassword(t *testing.T, l *lab) {
 	}
 	if got := l.remote("ops", "id -u"); got != "0" {
 		t.Fatalf("escalated uid %q", got)
+	}
+	if out := l.ok("doctor", "ops"); !strings.Contains(out, "sudo\tOK") || !strings.Contains(out, "sftp\tOK") {
+		t.Fatal(out)
 	}
 	// The password prompt never leaks into command output.
 	if out := l.ok("c", "ops", "echo done"); strings.TrimSpace(out) != "done" {
