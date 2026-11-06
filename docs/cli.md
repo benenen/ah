@@ -32,7 +32,7 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 
 | 命令 | 用途 |
 | --- | --- |
-| `ah list` | 列出连接名、主机、端口和登录用户 |
+| `ah list` | 列出连接名、主机、端口、登录用户、标签和备注；支持 `--tag` 与关键词筛选 |
 | `ah inspect NAME` | 以 JSON 输出单个连接配置；凭据只显示是否已配置 |
 | `ah new NAME --host HOST --user USER` | 创建连接；不会主动连接服务器 |
 | `ah edit NAME [flags]` | 只更新明确传入的字段 |
@@ -192,8 +192,23 @@ ah rm build
 | `--sudo` / `--sudo=false` | 启用/关闭该连接的默认 root 提权 |
 | `--sudo-password` | 隐藏输入独立的 sudo 密码并加密保存；本身不启用 sudo |
 | `--sftp-server PATH` | sudo 模式使用的独立 SFTP 服务绝对路径；空字符串恢复自动探测 |
+| `--tag TAG` | 标签，可重复或逗号分隔；`edit` 时整体替换 |
+| `--note TEXT` | 单行备注，最多 500 字符；空字符串清除 |
 
-`edit` 还支持 `--no-sudo`（等价 `--sudo=false`）、`--clear-password`、`--clear-sudo-password`、`--clear-proxy`。同一项的设置和清除选项互斥。修改其他字段会保留原密码、代理和 sudo 设置。
+`edit` 还支持 `--no-sudo`（等价 `--sudo=false`）、`--clear-password`、`--clear-sudo-password`、`--clear-proxy`，以及 `--add-tag`、`--remove-tag`、`--clear-tags`（与 `--tag` 互斥）。同一项的设置和清除选项互斥。修改其他字段会保留原密码、代理和 sudo 设置。
+
+### 标签、备注与筛选
+
+```sh
+ah new web1 --host web1.example.com --user deploy --tag prod,shop --note '订单服务主节点'
+ah edit web1 --add-tag k8s --remove-tag shop
+ah ls --tag prod              # 带 prod 标签的连接
+ah ls --tag prod --tag shop   # 同时带两个标签
+ah ls web 10.0.0              # 名称/主机/用户/备注/标签都包含 web 和 10.0.0
+ah ls --tag prod --json
+```
+
+标签以字母或数字开头，可含字母（含中文）、数字和 `_ . : / -`，最长 64 字节；匹配和去重都忽略大小写。删除连接上不存在的标签会报错。`ls` 表格增加 TAGS、NOTE 列，`--tag` 后按 Tab 补全已有标签。
 
 **密码选项是开关，不接收明文参数。**
 
@@ -386,6 +401,8 @@ identity_file = "~/.ssh/id_ed25519"
 proxies = ["socks5://127.0.0.1:1080", "socks5://proxy2.internal:1080"]
 sudo = true
 sftp_server = "/usr/lib/openssh/sftp-server"
+tags = ["prod", "storage"]
+note = "家里的 NAS"
 # password / sudo_password 由命令生成 enc:v1: 密文，不在这里填写明文。
 ```
 

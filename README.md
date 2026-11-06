@@ -128,6 +128,10 @@ ah edit C --no-sudo           # 关闭自动 sudo
 ah edit C --clear-sudo-password   # 删除保存的 sudo 密码，需要时交互输入
 ah edit C --term xterm-256color   # 远端 terminfo 没有本地 TERM 时固定一个它认识的名字
 ah edit C --clear-term            # 恢复使用本地 $TERM
+ah new D --host d.example.com --user deploy --tag prod,shop --note '订单服务'
+ah edit D --add-tag k8s --remove-tag shop
+ah ls --tag prod                 # 按标签筛选，多个 --tag 取交集
+ah ls shop 10.0.0                # 名称/主机/用户/备注/标签包含全部关键词
 ah rm B
 ah c A                  # 打开交互 SSH 命令行
 ah connect A                 # 等价命令
@@ -386,7 +390,7 @@ ah history --after 2026-01-01T00:00:00Z --before 2026-02-01T00:00:00Z
 
 clone/rename 拒绝覆盖已有别名，SSH 和 sudo 密码会按新别名重新加密；主密钥缺失或解密失败时不修改配置。已有历史和转发记录保留原连接名，不随改名更新。
 
-list 的 JSON 只包含 name、host、port、user、term；history 的 JSON 为记录数组，空结果为 `[]`。历史筛选先于 limit 生效，连接名精确匹配源或目标的别名，时间按开始时间筛选，after 包含边界，before 不包含边界，均使用 RFC3339。
+list 的 JSON 只包含 name、host、port、user、term、tags、note，`--tag` 和关键词筛选同样适用；history 的 JSON 为记录数组，空结果为 `[]`。历史筛选先于 limit 生效，连接名精确匹配源或目标的别名，时间按开始时间筛选，after 包含边界，before 不包含边界，均使用 RFC3339。
 
 ### 复制预览与排除
 

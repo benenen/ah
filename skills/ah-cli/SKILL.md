@@ -44,7 +44,7 @@ ah c nas "cat '/home/alice/a file.txt'"
 ah c nas 'cd /home/alice && ls -lah | head -20'
 ```
 
-`ah ls` / `ah list` 显示 NAME、HOST、PORT、USER、TERM。TERM 是连接保存的配置值；`-` 表示未配置，连接时沿用本地 `$TERM`（显式全局 `--term` 仍可覆盖），不是远端探测结果。
+`ah ls` / `ah list` 显示 NAME、HOST、PORT、USER、TERM、TAGS、NOTE。用户按环境或项目指代主机（“生产的机器”“订单项目”）时，先 `ah ls --tag prod` 或 `ah ls 关键词` 缩小范围（关键词匹配名称、主机、用户、备注和标签，忽略大小写），脚本解析用 `ah ls --json`。TERM 是连接保存的配置值；`-` 表示未配置，连接时沿用本地 `$TERM`（显式全局 `--term` 仍可覆盖），不是远端探测结果。
 
 `ah inspect NAME` 输出单个连接的缩进 JSON（无 `--json` 标志，本来就是 JSON），包含 host/port/user/identity_file/proxies/sudo/term 等字段；密码、sudo 密码只报告是否已配置，代理认证信息隐藏。脚本要读连接详情时用它，不要解析 `ls` 的表格。
 

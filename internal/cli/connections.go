@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/benenen/ah/internal/config"
@@ -11,43 +12,63 @@ import (
 
 func (a *app) listCommand() *cobra.Command {
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "list", Aliases: []string{"ls"}, Short: "List saved connections", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		entries, err := a.connections()
-		if err != nil {
-			return err
-		}
-		if jsonOutput {
-			type row struct {
-				Name string `json:"name"`
-				Host string `json:"host"`
-				Port int    `json:"port"`
-				User string `json:"user"`
-				Term string `json:"term"`
-			}
-			rows := make([]row, 0, len(entries))
-			for _, name := range sortedNames(entries) {
-				c := entries[name]
-				rows = append(rows, row{name, c.Host, c.Port, c.User, c.Term})
-			}
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
-		}
-		out := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		if _, err = fmt.Fprintln(out, "NAME\tHOST\tPORT\tUSER\tTERM"); err != nil {
-			return err
-		}
-		for _, name := range sortedNames(entries) {
-			c := entries[name]
-			term := c.Term
-			if term == "" {
-				term = "-"
-			}
-			if _, err = fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\n", name, c.Host, c.Port, c.User, term); err != nil {
+	var filter connectionFilter
+	cmd := &cobra.Command{Use: "list [KEYWORD...]", Aliases: []string{"ls"}, Short: "List saved connections, optionally filtered by tag or keyword",
+		Long: "List saved connections. --tag keeps connections carrying every given tag; KEYWORD keeps connections whose name, host, user, note or tags contain every keyword. Matching ignores case.",
+		Args: cobra.ArbitraryArgs, ValidArgsFunction: cobra.NoFileCompletions, RunE: func(cmd *cobra.Command, args []string) error {
+			entries, err := a.connections()
+			if err != nil {
 				return err
 			}
-		}
-		return out.Flush()
-	}}
+			filter.keywords = args
+			var names []string
+			for _, name := range sortedNames(entries) {
+				if filter.match(name, entries[name]) {
+					names = append(names, name)
+				}
+			}
+			if jsonOutput {
+				type row struct {
+					Name string   `json:"name"`
+					Host string   `json:"host"`
+					Port int      `json:"port"`
+					User string   `json:"user"`
+					Term string   `json:"term"`
+					Tags []string `json:"tags"`
+					Note string   `json:"note"`
+				}
+				rows := make([]row, 0, len(names))
+				for _, name := range names {
+					c := entries[name]
+					tags := c.Tags
+					if tags == nil {
+						tags = []string{}
+					}
+					rows = append(rows, row{name, c.Host, c.Port, c.User, c.Term, tags, c.Note})
+				}
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
+			}
+			out := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			if _, err = fmt.Fprintln(out, "NAME\tHOST\tPORT\tUSER\tTERM\tTAGS\tNOTE"); err != nil {
+				return err
+			}
+			dash := func(s string) string {
+				if s == "" {
+					return "-"
+				}
+				return s
+			}
+			for _, name := range names {
+				c := entries[name]
+				if _, err = fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", name, c.Host, c.Port, c.User, dash(c.Term), dash(strings.Join(c.Tags, ",")), dash(c.Note)); err != nil {
+					return err
+				}
+			}
+			return out.Flush()
+		}}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print connections as JSON with credentials hidden")
+	cmd.Flags().StringSliceVar(&filter.tags, "tag", nil, "only connections carrying this tag; repeat or comma-separate to require several")
+	_ = cmd.RegisterFlagCompletionFunc("tag", a.completeTags(false))
 	return cmd
 }
 func connectionFlags(cmd *cobra.Command, c *config.Connection) {
@@ -61,6 +82,8 @@ func connectionFlags(cmd *cobra.Command, c *config.Connection) {
 	cmd.Flags().IntVarP(&c.Port, "port", "p", 22, "SSH port")
 	cmd.Flags().StringVarP(&c.User, "user", "u", "", "SSH username")
 	cmd.Flags().StringVarP(&c.IdentityFile, "identity-file", "i", "", "private key path (empty to use agent/default keys)")
+	cmd.Flags().StringSliceVar(&c.Tags, "tag", nil, "label such as prod or a project name; repeat or comma-separate")
+	cmd.Flags().StringVar(&c.Note, "note", "", "free-form single-line note (empty clears it)")
 }
 func (a *app) newCommand() *cobra.Command {
 	c := config.Connection{Term: "xterm-256color"}
@@ -69,6 +92,7 @@ func (a *app) newCommand() *cobra.Command {
 		if err := config.ValidateName(args[0]); err != nil {
 			return err
 		}
+		c.Tags = normalizeTags(c.Tags)
 		if err := c.Validate(); err != nil {
 			return err
 		}
@@ -108,13 +132,15 @@ func (a *app) newCommand() *cobra.Command {
 		return err
 	}}
 	connectionFlags(cmd, &c)
+	_ = cmd.RegisterFlagCompletionFunc("tag", a.completeTags(false))
 	cmd.Flags().BoolVar(&password, "password", false, "prompt for a password and save it encrypted in TOML")
 	cmd.Flags().BoolVar(&sudoPassword, "sudo-password", false, "prompt for a sudo password and save it encrypted")
 	return cmd
 }
 func (a *app) editCommand() *cobra.Command {
 	var changes config.Connection
-	var password, clearPassword, clearProxy, sudoPassword, clearSudoPassword, clearSudoShell, clearTerm, noSudo bool
+	var password, clearPassword, clearProxy, sudoPassword, clearSudoPassword, clearSudoShell, clearTerm, noSudo, clearTags bool
+	var addTags, removeTagNames []string
 	cmd := &cobra.Command{Use: "edit NAME [flags]", Aliases: []string{"e"}, Short: "Update only the supplied connection fields", Args: cobra.ExactArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := a.store()
 		if err != nil {
@@ -202,6 +228,23 @@ func (a *app) editCommand() *cobra.Command {
 			if clearPassword {
 				c.Password = ""
 			}
+			if cmd.Flags().Changed("tag") {
+				c.Tags = normalizeTags(changes.Tags)
+			}
+			if clearTags {
+				c.Tags = nil
+			}
+			if len(removeTagNames) > 0 {
+				tags, err := removeTags(c.Tags, removeTagNames)
+				if err != nil {
+					return fmt.Errorf("connection %q: %w", args[0], err)
+				}
+				c.Tags = tags
+			}
+			c.Tags = normalizeTags(append(c.Tags, addTags...))
+			if cmd.Flags().Changed("note") {
+				c.Note = changes.Note
+			}
 			if err := c.Validate(); err != nil {
 				return err
 			}
@@ -228,6 +271,17 @@ func (a *app) editCommand() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("sudo-shell", "clear-sudo-shell")
 	cmd.Flags().BoolVar(&clearTerm, "clear-term", false, "remove the saved TERM and fall back to $TERM")
 	cmd.MarkFlagsMutuallyExclusive("term", "clear-term")
+	cmd.Flags().StringSliceVar(&addTags, "add-tag", nil, "add tags, keeping existing ones; repeat or comma-separate")
+	cmd.Flags().StringSliceVar(&removeTagNames, "remove-tag", nil, "remove tags (case-insensitive); repeat or comma-separate")
+	cmd.Flags().BoolVar(&clearTags, "clear-tags", false, "remove all tags")
+	for _, other := range []string{"add-tag", "remove-tag", "clear-tags"} {
+		cmd.MarkFlagsMutuallyExclusive("tag", other)
+	}
+	cmd.MarkFlagsMutuallyExclusive("clear-tags", "add-tag")
+	cmd.MarkFlagsMutuallyExclusive("clear-tags", "remove-tag")
+	_ = cmd.RegisterFlagCompletionFunc("tag", a.completeTags(false))
+	_ = cmd.RegisterFlagCompletionFunc("add-tag", a.completeTags(false))
+	_ = cmd.RegisterFlagCompletionFunc("remove-tag", a.completeTags(true))
 	return cmd
 }
 func (a *app) removeCommand() *cobra.Command {

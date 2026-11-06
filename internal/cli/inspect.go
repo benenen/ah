@@ -33,6 +33,8 @@ type inspectedConnection struct {
 	SFTPServer             string           `json:"sftp_server"`
 	Term                   string           `json:"term"`
 	EffectiveTerm          string           `json:"effective_term"`
+	Tags                   []string         `json:"tags"`
+	Note                   string           `json:"note"`
 }
 
 func (a *app) inspectCommand() *cobra.Command {
@@ -85,6 +87,7 @@ func (a *app) inspectCommand() *cobra.Command {
 				IdentityFile: c.IdentityFile, PasswordConfigured: c.Password != "", Proxies: proxies,
 				Sudo: c.Sudo, SudoPasswordConfigured: c.SudoPassword != "", SudoShell: c.SudoShell,
 				SFTPServer: c.SFTPServer, Term: c.Term, EffectiveTerm: terminal,
+				Tags: append([]string{}, c.Tags...), Note: c.Note,
 			}
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")

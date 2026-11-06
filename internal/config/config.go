@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/benenen/ah/internal/credentials"
 	"github.com/gofrs/flock"
@@ -37,6 +38,33 @@ type Connection struct {
 	IdentityFile string   `toml:"identity_file,omitempty"`
 	Password     string   `toml:"password,omitempty"`
 	Proxies      []string `toml:"proxies,omitempty"`
+	// Tags and Note are free-form labels for finding connections; they never
+	// affect how a connection is dialed.
+	Tags []string `toml:"tags,omitempty"`
+	Note string   `toml:"note,omitempty"`
+}
+
+// MaxNoteLength bounds a note so list output stays readable.
+const MaxNoteLength = 500
+
+var tagPattern = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N}_.:/-]*$`)
+
+// ValidateTag accepts letters, digits and _ . : / - (not leading), up to 64 bytes.
+func ValidateTag(tag string) error {
+	if len(tag) > 64 || !tagPattern.MatchString(tag) {
+		return fmt.Errorf("invalid tag %q: must begin with a letter or digit, contain only letters, digits, _ . : / -, and be at most 64 bytes", tag)
+	}
+	return nil
+}
+
+// HasTag reports whether the connection carries tag, ignoring case.
+func (c Connection) HasTag(tag string) bool {
+	for _, t := range c.Tags {
+		if strings.EqualFold(t, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 // ProxyChain returns the configured hops in traversal order.
@@ -78,6 +106,20 @@ func (c Connection) Validate() error {
 	}
 	if c.SudoShell != "" && strings.ContainsFunc(c.SudoShell, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
 		return fmt.Errorf("sudo_shell must be a shell path or name without whitespace or control characters")
+	}
+	seen := make(map[string]bool, len(c.Tags))
+	for _, tag := range c.Tags {
+		if err := ValidateTag(tag); err != nil {
+			return err
+		}
+		key := strings.ToLower(tag)
+		if seen[key] {
+			return fmt.Errorf("duplicate tag %q", tag)
+		}
+		seen[key] = true
+	}
+	if utf8.RuneCountInString(c.Note) > MaxNoteLength || strings.ContainsFunc(c.Note, unicode.IsControl) {
+		return fmt.Errorf("note must be a single line of at most %d characters without control characters", MaxNoteLength)
 	}
 	if c.Term != "" && strings.ContainsFunc(c.Term, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
 		return fmt.Errorf("term must be a terminfo name without whitespace or control characters")

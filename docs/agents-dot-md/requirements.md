@@ -145,7 +145,7 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 
 `clone OLD NEW` 保留原连接，`rename OLD NEW` 删除原别名。新别名须合法且不存在；配置更新锁内完成凭据按新名重新加密，兼容旧 sudo 绑定。失败不提交配置。历史和转发不改名。
 
-`list --json` 输出按名称排序的安全字段数组（name/host/port/user/term）。`history [search] --json` 输出记录数组，空数组为 []；`--status` 精确匹配合法状态，`--connection` 精确匹配源/目标连接名；`--after/--before` 为 RFC3339 开始时间范围，左闭右开；所有条件与关键词取交集，先筛选再应用 limit。
+`list --json` 输出按名称排序的安全字段数组（name/host/port/user/term/tags/note，tags 无值时为 []）。`history [search] --json` 输出记录数组，空数组为 []；`--status` 精确匹配合法状态，`--connection` 精确匹配源/目标连接名；`--after/--before` 为 RFC3339 开始时间范围，左闭右开；所有条件与关键词取交集，先筛选再应用 limit。
 
 ## 复制预览与排除
 
@@ -168,3 +168,9 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 ## 断点续传扩展
 
 `cp --resume` 支持四种方向及递归逐文件复制，历史自动补 resume INTEGER 列（旧记录 false），show/run 保留。失败保留随机同目录 `.ah-resume-<fingerprint>-<random>`，fingerprint 绑定源/目标路径、源 SHA-256 和权限；只读取普通片段、优先最大且不超过源长度。逐块比较前缀并复制到独立 staging，再复制剩余内容，校验实际源流 SHA-256、长度与源句柄 stat 大小/时间后才按原原子发布/备份规则发布。损坏片段失败，源变化不复用旧指纹；每次 staging 独立避免共享写入。取消关闭 SFTP，错误报告保留片段位置。成功只清理本次 staging，旧失败片段不自动删除。该策略完整预读源且克隆前缀，额外读取和空间成本不承诺网络流量降低。预览只读校验并显示 resume-prefix。
+
+## 标签、备注与筛选
+
+连接 TOML 可选 `tags` 字符串数组和 `note` 单行备注，仅用于查找，不影响连接行为。标签以字母或数字开头，只含字母、数字和 `_ . : / -`，最长 64 字节，同一连接内忽略大小写不得重复；备注最多 500 字符，不含控制字符。
+`new/edit --tag` 可重复或逗号分隔，new 设置、edit 整体替换；edit 另有 `--add-tag`、`--remove-tag`（删除不存在的标签报错）、`--clear-tags`，`--tag` 与三者互斥，`--clear-tags` 与增删互斥；同时增删时先删后加。`--note` 设置，空字符串清除。CLI 输入按忽略大小写去重并保留首次写法。
+`list [KEYWORD...] [--tag TAG...]`：`--tag` 要求同时带有全部标签；关键词忽略大小写，在名称、主机、用户、备注和标签中做子串匹配，多个关键词取交集；与 `--json` 共用筛选。表格增加 TAGS、NOTE 列，空值显示 `-`。inspect 输出 tags/note。`--tag`/`--add-tag` 补全已有标签，`--remove-tag` 补全该连接的标签。
