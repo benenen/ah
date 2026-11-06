@@ -200,6 +200,11 @@ func (s Store) Load() (map[string]Connection, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	return Decode(data)
+}
+
+// Decode validates a complete TOML connection document.
+func Decode(data []byte) (map[string]Connection, error) {
 	d := document{Connections: make(map[string]Connection)}
 	if err := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields().Decode(&d); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
@@ -208,6 +213,14 @@ func (s Store) Load() (map[string]Connection, error) {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	return d.Connections, nil
+}
+
+// Encode validates connections and applies the same defaults as Load.
+func Encode(connections map[string]Connection) ([]byte, error) {
+	if err := normalize(connections); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
+	}
+	return toml.Marshal(document{Connections: connections})
 }
 
 // Update serializes cooperating writers and commits only a valid callback result.
@@ -249,10 +262,7 @@ func (s Store) Update(ctx context.Context, fn func(map[string]Connection) error)
 	if err := fn(connections); err != nil {
 		return err
 	}
-	if err := normalize(connections); err != nil {
-		return fmt.Errorf("validate config: %w", err)
-	}
-	data, err := toml.Marshal(document{Connections: connections})
+	data, err := Encode(connections)
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}

@@ -31,6 +31,7 @@ func TestLab(t *testing.T) {
 		{"RemoteCommand", testRemoteCommand},
 		{"InteractiveShell", testInteractiveShell},
 		{"PasswordLogin", testPasswordLogin},
+		{"ConfigMigration", testConfigMigration},
 		{"CopyFile", testCopyFile},
 		{"CopyTree", testCopyTree},
 		{"History", testHistory},

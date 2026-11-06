@@ -16,6 +16,7 @@
 - [sudo 默认提权](#sudo-默认提权)
 - [Tab 补全](#tab-补全)
 - [配置与凭据](#配置与凭据)
+- [配置导出与迁移](#配置导出与迁移)
 - [常见问题与退出码](#常见问题与退出码)
 - [Agent 使用](#agent-使用)
 
@@ -34,6 +35,7 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | 命令 | 用途 |
 | --- | --- |
 | `ah list` | 列出连接名、主机、端口、登录用户、标签和备注；支持 `--tag` 与关键词筛选 |
+| `ah config export FILE` / `ah config import FILE` | 导出、备份和迁移整份连接配置 |
 | `ah inspect NAME` | 以 JSON 输出单个连接配置；凭据只显示是否已配置 |
 | `ah new NAME --host HOST --user USER` | 创建连接；不会主动连接服务器 |
 | `ah edit NAME [flags]` | 只更新明确传入的字段 |
@@ -512,3 +514,22 @@ ah --config ./connections.toml inspect nas
 未设置的字符串保留为空，代理链为空时输出 `[]`；旧版单代理配置也统一展示为 proxies 数组。
 每跳包含 address 和 authentication_configured，address 隐藏代理用户名及密码。命令不连接远端或解密凭据；密码密文、明文及私钥内容均不输出。
 名称不存在、配置损坏或参数数量错误时返回非零退出码。连接名支持 Tab 补全。
+
+## 配置导出与迁移
+
+```sh
+ah config export ./connections.toml
+ah config import ./connections.toml --dry-run
+ah config import ./connections.toml
+ah config import ./connections.toml --force
+ah config export ./backup.ah --with-secrets
+ah config import ./backup.ah
+```
+
+普通导出为 TOML，移除 SSH/sudo 密码和代理认证信息；加密导出会隐藏输入并确认独立备份口令，包含这些凭据，但不包含源主密钥。加密包使用 scrypt 与 AES-256-GCM，导入时用目标本地主密钥重新加密 SSH/sudo 密码。支持旧版 sudo 密码绑定。
+
+导入默认合并，同名时报错，`--force/-f` 替换同名连接的完整定义（包括清除不含凭据导出中省略的密码）。其他连接保留。`--dry-run` 输出 add/replace，不创建配置、锁、目录或主密钥，同名预览也需 `--force`。无效配置、口令错误、包损坏、跳板缺失或循环时不改写配置。
+
+导出文件为 0600，父目录须存在；已有文件需 `config export --force` 才能替换，不能覆盖当前配置、密钥、known_hosts、历史库及辅助文件或当前口令文件。普通 TOML 不接受直接携带绑定源主密钥的 enc:v1 密码，迁移密码需用加密包。文件大小最多 16 MiB。
+
+加密导入、导出可传 `--passphrase-file /path/to/private-file`，代替交互输入；文件须为普通文件，Unix 下仅所有者可访问，末尾 LF/CRLF 不计入口令。口令不可用明文参数传入。私钥文件、主机信任、复制历史和转发记录不迁移；私钥路径原样保留，目标机器上按需修改。

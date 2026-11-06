@@ -8,7 +8,7 @@
 - `internal/cli/`：命令参数、用户交互与输出。
 - `internal/credentials/`：密码加解密、独立主密钥创建与读取。
 - `internal/history/`：SQLite 历史持久化、状态更新与关键词查询。
-- `internal/config/`：连接模型、TOML 编解码、校验与原子保存。
+- `internal/config/`：连接模型、TOML 编解码、校验与原子保存，以及移除凭据的导出和口令加密迁移包。
 - `internal/sshclient/`：SSH/SOCKS5 多跳连接、认证、主机密钥校验、sudo 提权握手、会话与 SFTP 生命周期。
 - `internal/forward/`：转发 ID、状态持久化、私有控制通道与查询/停止；CLI 管理后台进程启动，SSH 层负责 TCP 数据转发（本地、远程与 SOCKS5 动态转发）。
 - `internal/transfer/`：本地/远端源目标解析、单文件与目录树流式复制、覆盖前备份。

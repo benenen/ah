@@ -462,3 +462,22 @@ ah sync --delete --exclude '*.log' --exclude 'uploads/' ./dist web:/srv/app
 `diff` 和 `sync --dry-run` 不写目标或历史；同步预览用 `delete` / `retain` 表示目标多余项的处理。预览不能保证后续写权限、空间或服务器发布扩展可用。正式同步逐文件原子替换，目录整体不原子；失败保留已完成更新，不继续删除。删除前再次检查源清单及待删目标的类型和文件元数据；不保证并发修改中的目录具有一致快照。根路径为符号链接时拒绝操作，同一本地文件系统或同一连接名下拒绝源目标目录重叠。
 
 同步写入 SQLite 历史，`history show/run` 保留同步模式、排除规则及 `--delete`；重跑带删除选项的历史也会执行删除。旧历史仍按原来的 `cp` 方式重跑。
+
+### 配置导出、备份与迁移
+
+```sh
+ah config export ./connections.toml                  # 不含凭据的 TOML
+ah config import ./connections.toml --dry-run         # 预览新增和同名冲突
+ah config import ./connections.toml                   # 合并，同名时报错
+ah config import ./connections.toml --force           # 明确替换同名连接
+ah config export ./backup.ah --with-secrets           # 输入并确认备份口令
+ah config import ./backup.ah                         # 自动识别加密包并输入口令
+```
+
+导出包含全部连接的地址、标签、备注、代理与跳板配置。默认移除保存的 SSH/sudo 密码和代理 URL 的认证信息。`--with-secrets` 将配置及上述凭据一起加密，使用 scrypt 派生密钥及 AES-256-GCM；原主密钥不进入备份。迁移导入时，用目标机器现有主密钥重新加密保存的 SSH/sudo 密码，没有主密钥时自动创建。
+
+导出文件权限为 0600，默认拒绝覆盖已有文件，`config export --force` 可替换旧备份；不能把备份写到当前配置、主密钥、known_hosts、历史数据库及其辅助文件或口令文件上。目标父目录须存在。私钥只保存路径，不打包文件；迁移后可能需要调整路径并重新确认主机指纹。复制历史和转发记录不导出。
+
+导入在配置锁内校验并原子合并，同名连接默认整批报错；`--force` 替换该连接的完整定义，其他连接保留。使用不含凭据的文件覆盖时，原连接保存的密码也会清除。无效 TOML、口令错误、包损坏、跳板缺失或循环都不会改写配置。`--dry-run` 只输出 `add` / `replace`，不写配置或创建主密钥；同名预览也需显式 `--force`。导入大小上限为 16 MiB。
+
+自动化可用 `--passphrase-file /path/to/private-file` 代替交互输入，两端使用同一口令。该文件须是普通文件，Unix 下不得有组或其他用户权限；读取时去掉末尾一组换行（LF 或 CRLF）。口令不接受命令行明文参数。普通 TOML 导入拒绝直接携带 `enc:v1:` 密码，因为它们绑定源机器主密钥；需要迁移密码时使用加密导出。
