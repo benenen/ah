@@ -279,14 +279,14 @@ func TestUpgradesOldSchema(t *testing.T) {
 	for i := 0; i < 2; i++ { // reopening an upgraded database is a no-op
 		s := openTestStore(t, path)
 		r, err := s.Get(context.Background(), 1)
-		if err != nil || r.Source != "old" || !r.Force || r.Recursive || r.BackupKeep != 0 {
+		if err != nil || r.Source != "old" || !r.Force || r.Recursive || r.Sync || r.Delete || r.BackupKeep != 0 {
 			t.Fatalf("old row: %+v %v", r, err)
 		}
-		id, err := s.Begin(context.Background(), Record{Source: "new", Recursive: true, BackupKeep: 5})
+		id, err := s.Begin(context.Background(), Record{Source: "new", Recursive: true, BackupKeep: 5, Sync: true, Delete: true})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if r, err := s.Get(context.Background(), id); err != nil || !r.Recursive || r.BackupKeep != 5 {
+		if r, err := s.Get(context.Background(), id); err != nil || !r.Recursive || !r.Sync || !r.Delete || r.BackupKeep != 5 {
 			t.Fatalf("new row: %+v %v", r, err)
 		}
 	}

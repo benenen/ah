@@ -142,11 +142,14 @@ func (a *app) historyCommand() *cobra.Command {
 		if !cmd.Flags().Changed("key-file") {
 			replay.keyPath = record.KeyPath
 		}
+		if record.Sync && cmd.Flags().Changed("force") && !force {
+			return fmt.Errorf("sync always updates changed files; --force=false is not supported")
+		}
 		if cmd.Flags().Changed("force") {
 			record.Force = force
 		}
 		// Structured invocation, never shell evaluation of data from SQLite.
-		return replay.copyWithHistory(cmd, record.Source, record.Destination, copyMode{Resume: record.Resume, Force: record.Force, Recursive: record.Recursive, BackupKeep: record.BackupKeep, Exclude: record.Exclude}, record.Cwd)
+		return replay.copyWithHistory(cmd, record.Source, record.Destination, copyMode{Sync: record.Sync, Delete: record.Delete, Resume: record.Resume, Force: record.Force, Recursive: record.Recursive, BackupKeep: record.BackupKeep, Exclude: record.Exclude}, record.Cwd)
 	}}
 	run.Flags().BoolVarP(&force, "force", "f", false, "override recorded overwrite behavior (use --force=false to prevent replacement)")
 	cmd.AddCommand(run)
@@ -192,11 +195,18 @@ func historyShellCommand(r history.Record, historyPath string) (string, error) {
 		}
 		args = append(args, "--history-file", absolute)
 	}
-	args = append(args, "cp")
-	if r.Force {
+	command := "cp"
+	if r.Sync {
+		command = "sync"
+	}
+	args = append(args, command)
+	if r.Delete && r.Sync {
+		args = append(args, "--delete")
+	}
+	if r.Force && !r.Sync {
 		args = append(args, "--force")
 	}
-	if r.Recursive {
+	if r.Recursive && !r.Sync {
 		args = append(args, "--recursive")
 	}
 	if r.BackupKeep > 0 {

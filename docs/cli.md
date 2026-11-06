@@ -10,6 +10,7 @@
 - [交互登录与远程命令](#交互登录与远程命令)
 - [端口转发](#端口转发)
 - [文件复制](#文件复制)
+- [目录差异与同步](#目录差异与同步)
 - [历史查询与重跑](#历史查询与重跑)
 - [SOCKS5 代理链](#socks5-代理链)
 - [sudo 默认提权](#sudo-默认提权)
@@ -41,6 +42,8 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | `ah c NAME [COMMAND [ARG...]]` | `connect` 的简写 |
 | `ah forward NAME LOCAL TARGET` | 通过 SSH 转发 TCP 端口；`-D` 起 SOCKS5 代理，`-R` 远程转发 |
 | `ah cp SOURCE DESTINATION` | 单个普通文件的本地/远端复制 |
+| `ah diff SOURCE DESTINATION` | 查看目录新增、修改及目标独有项目 |
+| `ah sync SOURCE DESTINATION` | 单向同步目录内容，`--delete` 显式删除目标多余项目 |
 | `ah history [QUERY...]` | 查询复制历史 |
 | `ah history search [QUERY...]` | 显式的历史查询子命令 |
 | `ah history show ID` | 输出可复用的 shell 命令 |
@@ -302,6 +305,32 @@ TARGET 写原文件路径，不是备份文件本身。`ls` 显示序号（1 为
 还原以原子替换写回，权限取自备份。还原前先把当前文件也备份一份（输出里会给出名字），所以还原本身可以再用 `ah b restore` 撤回；备份数同样受 `--backup-keep`（默认 5）限制，但正被还原的那份不会被清理。当前内容已与所选备份相同时不做改动。原文件被删掉时也能还原。sudo 连接下经提权的 SFTP 读写，可还原 root 文件。还原不写入复制历史。
 
 替换已有文件时（`-f` 或 `--backup`），若目标与源大小、权限位和内容都完全相同，就跳过该文件：不替换、不备份，输出中计为 unchanged（单个文件打印 `Unchanged (identical content)`）。比较需要把目标完整读一遍，远端大文件会多花一次读取时间；只有权限位不同时仍会替换。
+
+## 目录差异与同步
+
+```sh
+ah diff ./dist web:/srv/app
+ah sync ./dist web:/srv/app
+ah sync --delete --dry-run ./dist web:/srv/app
+ah sync --delete --exclude '*.log' --exclude 'uploads/' ./dist web:/srv/app
+```
+
+支持本地与远端四种方向，源、目标均为目录。内容直接同步到目标根，不追加源目录名；目标缺失时创建，父目录须存在。文件按内容和权限比较，相同文件保留；新建目录继承源权限，已有目录保留权限。
+
+| 输出 | 含义 |
+| --- | --- |
+| `add` / `mkdir` | 新增文件 / 目录 |
+| `modify` | 文件内容或权限不同 |
+| `target-only` | diff 中仅目标存在的项目 |
+| `delete` / `retain` | 同步预览将删除 / 保留的目标项目 |
+| `conflict` | 文件与目录类型不一致，实际同步及同步预览报错 |
+| `exclude` / `skip-special` | 排除项 / 符号链接或特殊文件，保留不动 |
+
+默认保留目标多余项目；`--delete` 在新增、更新全部成功后才逐项删除多余普通文件和空目录。`--exclude` 可重复，语义同复制，并保护命中的目标项目。包含排除项或特殊文件的多余目录也会保留。根路径不能为符号链接；同一本地文件系统或同一连接名下，源、目标目录不能重叠。
+
+`diff` 和 `--dry-run` 不写目标或历史，但仍需 SSH 认证及首次信任。预览不保证后续写权限、空间、发布扩展可用。同步逐文件原子替换，树整体非原子，失败保留已完成更新并停止后续删除；并发修改不保证一致快照。删除前复查源清单和待删目标元数据，检测到变化时报错。
+
+同步保留历史，`history show/run` 保留 `--delete` 和排除项；重跑带删除的同步记录也会删除多余文件。旧记录仍按复制重跑。
 
 ## 历史查询与重跑
 

@@ -20,6 +20,7 @@ import (
 // them so a rerun behaves the same.
 type copyMode struct {
 	Force, Recursive, Resume bool
+	Sync, Delete             bool
 	BackupKeep               int // 0 disables backups
 	Exclude                  []string
 }
@@ -99,6 +100,9 @@ func (a *app) copyWithHistory(cmd *cobra.Command, source, target string, mode co
 			err = fmt.Errorf("copy history #%d: %w", id, err)
 		} else if tree != nil {
 			summary := fmt.Sprintf("Copied %d files, %d bytes", tree.Files, n)
+			if mode.Sync {
+				summary = fmt.Sprintf("Synced %d files, %d bytes, %d deleted", tree.Files, n, tree.Deleted)
+			}
 			if tree.Unchanged > 0 {
 				summary += fmt.Sprintf(", %d unchanged", tree.Unchanged)
 			}
@@ -124,8 +128,10 @@ func (a *app) performCopy(cmd *cobra.Command, source, target string, mode copyMo
 	if err != nil {
 		return 0, nil, false, err
 	}
-	if err := a.protectHistoryDestination(src, dst); err != nil {
-		return 0, nil, false, err
+	if !mode.Sync {
+		if err := a.protectHistoryDestination(src, dst); err != nil {
+			return 0, nil, false, err
+		}
 	}
 	sourceClient, closeSource, err := a.openCopyEndpoint(cmd, src, cwd)
 	if err != nil {
@@ -160,7 +166,12 @@ func (a *app) performCopy(cmd *cobra.Command, source, target string, mode copyMo
 	if dst.Name == "" {
 		tree.CheckTarget = a.protectHistoryPath
 	}
-	result, err := transfer.CopyTree(cmd.Context(), sourceClient, targetClient, src.Path, dst.Path, tree)
+	var result transfer.TreeResult
+	if mode.Sync {
+		result, err = transfer.SyncDirectories(cmd.Context(), sourceClient, targetClient, src.Path, dst.Path, transfer.SyncOptions{TreeOptions: tree, Delete: mode.Delete})
+	} else {
+		result, err = transfer.CopyTree(cmd.Context(), sourceClient, targetClient, src.Path, dst.Path, tree)
+	}
 	bar.finish()
 	return result.Bytes, &result, false, err
 }
@@ -217,7 +228,7 @@ func (a *app) openCopyEndpoint(cmd *cobra.Command, e transfer.Endpoint, cwd stri
 }
 
 func (a *app) copyRecord(source, target string, mode copyMode, cwd string) (history.Record, error) {
-	record := history.Record{Resume: mode.Resume, Exclude: append([]string(nil), mode.Exclude...), Source: source, Destination: target, Force: mode.Force, Recursive: mode.Recursive, BackupKeep: mode.BackupKeep, Cwd: cwd}
+	record := history.Record{Sync: mode.Sync, Delete: mode.Delete, Resume: mode.Resume, Exclude: append([]string(nil), mode.Exclude...), Source: source, Destination: target, Force: mode.Force, Recursive: mode.Recursive, BackupKeep: mode.BackupKeep, Cwd: cwd}
 	store, err := a.store()
 	if err != nil {
 		return record, err

@@ -30,6 +30,7 @@ type TreeOptions struct {
 // TreeResult summarizes a recursive copy.
 type TreeResult struct {
 	Files, Dirs int
+	Deleted     int
 	// Unchanged counts existing destination files left alone because they
 	// already matched; they are not in Files or Bytes.
 	Unchanged int

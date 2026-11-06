@@ -35,6 +35,7 @@ func TestLab(t *testing.T) {
 		{"CopyTree", testCopyTree},
 		{"History", testHistory},
 		{"FeatureExtensions", testFeatureExtensions},
+		{"DirectorySync", testDirectorySync},
 		{"Forwards", testForwards},
 		{"SudoWithoutPassword", testSudoWithoutPassword},
 		{"SudoWithPassword", testSudoWithPassword},
