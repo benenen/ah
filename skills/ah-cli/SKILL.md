@@ -1,11 +1,11 @@
 ---
 name: ah-cli
-description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制本地或远端文件和目录（可在覆盖前备份并还原）、查询重跑复制历史、管理 SSH 端口转发（含把只在内网或仅监听 127.0.0.1 的数据库、Redis、Web 后台等服务拉到本机端口、起 SOCKS5 代理浏览内网网站、把本机服务暴露给服务器）、配置 SOCKS5 多跳和 sudo。当用户提到 ah、bin/ah，或要求通过 ah 连接服务器、传文件、管理转发、访问只能经 SSH 到达的数据库/缓存/内网网站等端口、配置认证/代理/提权时使用。
+description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令（含按标签批量执行）、复制本地或远端文件和目录（可在覆盖前备份并还原）、对比和单向同步目录、查询重跑复制历史、管理 SSH 端口转发（含把只在内网或仅监听 127.0.0.1 的数据库、Redis、Web 后台等服务拉到本机端口、起 SOCKS5 代理浏览内网网站、把本机服务暴露给服务器）、配置 SOCKS5 多跳、SSH 跳板机和 sudo、诊断连接、导出迁移连接配置。当用户提到 ah、bin/ah，或要求通过 ah 连接服务器、在一批机器上跑命令、传文件或同步目录、管理转发、访问只能经 SSH 到达的数据库/缓存/内网网站等端口、配置认证/代理/提权时使用。
 ---
 
 # 使用 ah CLI
 
-命令与简写：`backup/b`、`connect/c`、`copy/cp`、`edit/e`、`forward/f`、`history/h`、`list/ls`、`new/n`、`remove/rm`、`version/v`。参数完全一致；`h` 是历史命令，`v` 输出版本与构建信息，`-h` 是帮助选项。
+命令与简写：`backup/b`、`connect/c`、`copy/cp`、`edit/e`、`forward/f`、`history/h`、`list/ls`、`new/n`、`remove/rm`、`version/v`。参数完全一致；`h` 是历史命令，`v` 输出版本与构建信息，`-h` 是帮助选项。无简写的命令：`clone`、`rename`、`inspect`、`pick`、`exec`、`doctor`、`diff`、`sync`、`config`、`completion`。
 
 ## 先确定二进制和操作对象
 
@@ -21,17 +21,24 @@ description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令、复制
 | 用户意图 | 命令形态 |
 | --- | --- |
 | 查看、新建、编辑、删除连接 | `list`、`inspect NAME`、`new NAME --host HOST --user USER`、`edit NAME`、`rm NAME` |
+| 复制或改名连接 | `clone OLD NEW`、`rename OLD NEW` |
+| 连不上、复制报扩展/sudo 错误时定位阶段 | `doctor NAME` |
 | 执行一次远程命令 | `c NAME COMMAND...`（等价 `connect`） |
-| 人工交互登录 | `c NAME`，需要可交互终端 |
+| 在一组带标签的机器上执行同一命令 | `exec --tag TAG --dry-run -- CMD`，核对后去掉 `--dry-run` |
+| 人工交互登录 | `c NAME`，需要可交互终端；用户想自己搜索挑选时推荐 `pick` |
+| 经跳板机访问内网主机 | `new NAME ... --jump BASTION` 或 `edit NAME --jump BASTION` |
 | 创建本地端口转发 | `f NAME LOCAL TARGET -d` |
 | 浏览器/工具经服务器访问多个内网站点 | `f NAME 1080 -D -d`，客户端用 socks5h 代理 `127.0.0.1:1080` |
 | 让服务器访问本机服务 | `f NAME REMOTE_PORT LOCAL_PORT -R -d` |
 | 访问只在内网可达的数据库/缓存/Web 等服务 | `f NAME LOCAL TARGET -d`，再让客户端连 `127.0.0.1:LOCAL` |
 | 管理已有转发 | `f ls`、`f kill ID`、`f start ID`、`f restart ID`、`f rm ID`、`f rm --all` |
 | 上传/下载/远端互传 | `cp SOURCE DESTINATION`，目录加 `-r`，覆盖前留备份加 `--backup` |
+| 大文件断点续传 | `cp --resume SOURCE DESTINATION` |
+| 对比或单向同步目录 | `diff SRC DST`、`sync --dry-run SRC DST` → `sync SRC DST`，删目标多余项加 `--delete` |
 | 查看或还原被覆盖的旧版本 | `backup ls TARGET`、`backup restore TARGET [VERSION]` |
 | 查找并复用复制操作 | `history search WORDS...` → `history show ID` → `history run ID` |
 | 持久化代理链 | `edit NAME --proxy ADDRESS --proxy ADDRESS` |
+| 备份或迁移整份连接配置 | `config export FILE`、`config import FILE --dry-run` → `config import FILE` |
 | 持久化默认提权 | `edit NAME --sudo`，可另加 `--sudo-password` |
 
 ### 连接和远程命令
@@ -48,9 +55,38 @@ ah c nas 'cd /home/alice && ls -lah | head -20'
 
 `ah inspect NAME` 输出单个连接的缩进 JSON（无 `--json` 标志，本来就是 JSON），包含 host/port/user/identity_file/proxies/sudo/term 等字段；密码、sudo 密码只报告是否已配置，代理认证信息隐藏。脚本要读连接详情时用它，不要解析 `ls` 的表格。
 
+`clone OLD NEW` 保留原连接并复制一份，`rename OLD NEW` 改名并同步更新其他连接里引用旧名的 `jump`；两者都拒绝覆盖已有名称。历史和转发记录保留原连接名，改名后用旧名查历史、`f ls` 里看到旧名都属正常。
+
+连接失败或复制报 sudo/SFTP/扩展错误时，先跑 `doctor NAME`：它按配置、认证资料、TCP/代理链、密钥交换、主机密钥、认证、sudo、SFTP、复制扩展逐阶段报告，失败返回非零，按第一个失败阶段排查。它不建测试文件，不能证明目标目录可写或空间够用。
+
 自动执行任务时优先使用带命令的 `c`，避免停留在登录 shell。将 ah 自身选项放在连接名之前；之后所有参数（包括 `--help`）属于远端。
 
 远程命令按 SSH 方式空格拼接后交给远端 shell，不保留本地 argv 边界。对含空格的路径保留远端引号，并给整个命令做本地引用；引用完整命令可使管道/重定向在远端执行。使用工具的结构化参数或可靠的 shell 引用，不将不可信文本直接拼入远程命令。无命令时才申请交互 PTY；目前没有 `-t`/`-tt`。交互 PTY 会连同本地终端设置和 `TERM` 一起发给远端；远端 terminfo 缺少该终端类型时（例如 Ghostty 的 `xterm-ghostty` 遇上旧发行版），远端行编辑退化，退格只移动光标而不删除字符。用 `edit NAME --term xterm-256color` 为该连接固定名字，或临时用 `ah --term xterm-256color c NAME`；`--clear-term` 恢复使用本地 `$TERM`。
+
+`pick [QUERY...] [--tag TAG]` 是给人用的全屏选择器（stdin 和 stderr 都要是终端，仅 macOS/Linux），Enter 后进入与 `c NAME` 相同的会话。agent 已知连接名时直接用 `c`。
+
+### 按标签批量执行
+
+```sh
+ah exec --tag prod --dry-run -- 'df -h'                  # 只列出命中的连接，不联网
+ah exec --tag prod --jobs 4 -- 'df -h'
+ah exec --tag prod,web --exec-timeout 30s -- 'systemctl status nginx'
+```
+
+先 `--dry-run` 把命中的连接名告诉用户再执行，涉及写操作（重启服务、改文件）时尤其如此。`--tag` 必填，多个标签取交集；`--` 必填，其后命令的拼接和引用规则同 `c`。`--jobs` 默认 4（1–64）；`--exec-timeout` 限制每台从连接到命令结束的总时长，默认不限，长命令或可能卡住的机器要设上。
+
+输出每行带 `[连接名]` 前缀，stderr 末尾按名称列出 NAME/STATUS/EXIT/ERROR 汇总。退出码 0 = 全部成功，1 = 至少一台失败或超时，130 = 整批取消；逐台结论以汇总表为准，失败的机器不会自动重试，需要时对失败项单独 `c NAME` 重跑。
+
+批量执行没有 PTY、不读 stdin，也不弹任何密码、口令或主机信任提示：只能用保存的密码、agent、无口令私钥和保存的 sudo 密码/免密 sudo。从未连过的机器先逐台 `c NAME` 确认指纹，或在用户授权后加全局 `--trust-new-host`。Ctrl+C 只停止后续机器并断开连接，不回滚已在远端执行的操作。
+
+### 跳板机
+
+```sh
+ah new private --host 10.0.0.9 --user bob --jump bastion
+ah edit private --jump ''        # 恢复直连
+```
+
+`--jump` 引用另一个已保存的连接名，跳板可再引用跳板（最多 32 层）；每跳各自认证和校验主机密钥，失败不回退直连。同一连接不能同时设 `jump` 和 `--proxy`，需要代理时设在跳板连接上。connect、exec、cp、forward、补全、doctor 都走这条链。
 
 ### 密码、主机信任和 sudo
 
@@ -105,7 +141,7 @@ MySQL 客户端必须写 `127.0.0.1`：写 `localhost` 会被当作 unix socket�
 
 其中 `AllowTcpForwarding no` 最容易被误判：`f -d` 会成功返回 ID、`f ls` 立刻看还是 `running`（监听和 SSH 都正常），只有真有客户端连进来才暴露，别据此断定隧道可用。
 
-用完按用户意图收尾：`f kill ID` 保留记录供下次 `f start ID`，或 `f kill ID && f rm ID` 清理。`-d` 起的转发会在用户配置目录 `ah/forwards/` 留下记录，别默默留着不报。隧道不自动重连，也不随机器重启恢复。各服务的完整示例见 `docs/internal-services-over-ssh.md`，独立安装此 skill 时按本节操作即可。
+用完按用户意图收尾：`f kill ID` 保留记录供下次 `f start ID`，或 `f kill ID && f rm ID` 清理。`-d` 起的转发会在用户配置目录 `ah/forwards/` 留下记录，别默默留着不报。隧道不随机器重启恢复。各服务的完整示例见 `docs/internal-services-over-ssh.md`，独立安装此 skill 时按本节操作即可。
 
 自动化启动优先用 `-d`，等 SSH 和本地监听就绪后返回新 ID；不加则前台运行，Ctrl+C 停止。后台不能提示密码或确认主机指纹，先准备好非交互认证和主机信任。
 
@@ -113,7 +149,15 @@ MySQL 客户端必须写 `127.0.0.1`：写 `localhost` 会被当作 unix socket�
 
 `f rm ID` 删除 stopped/failed 记录及日志；`f rm -f ID` 先停止 running/starting 转发再删除。仅在用户授权停止该转发时使用 `-f`。`f rm --all` 只清 stopped/failed，其余打印 Skipped；`f rm --all -f` 会停掉当前用户的全部转发，只在用户明确要求全部清理时使用，之前先 `f ls` 告诉用户会断开哪些运行中的转发。控制通道不可达时命令报错并保留记录，不按旧 PID 杀进程；`stale` 不能当作已确认停止。记录不可读时只有 `-f` 能删，且会警告其工作进程可能仍在监听；应先查清是否有残留监听再删。顶层 `ah rm NAME` 删除的是连接配置，注意命令层级。
 
-记录与日志位于用户配置目录 `ah/forwards/`，不随 `--config` 分组。确认启动成功还需核对 `f ls` 状态；报告 ID 和实际监听地址。SSH 断开或目标连接失败会结束转发，没有自动重连或开机恢复。
+记录与日志位于用户配置目录 `ah/forwards/`，不随 `--config` 分组。确认启动成功还需核对 `f ls` 状态；报告 ID 和实际监听地址。
+
+默认情况下 SSH 断开或单次目标连接失败都会结束转发。需要长时间挂着的隧道按需组合：
+
+```sh
+ah --keepalive 20s f nas 15432 5432 --continue-on-error --reconnect -d
+```
+
+`--keepalive` 定期探活，等回复超过 `--timeout` 就判定断线；`--continue-on-error` 让 `-L/-R` 的单个客户端失败只断开该客户端；`--reconnect` 在首次启动成功后断线时按 1、2、4… 秒（上限 30 秒）退避重连，ID 和监听地址不变，`f ls` 的 ERROR 列显示 reconnecting 和最近断线原因。重连期间监听可能不可用、旧 TCP 连接会断，客户端要自己重连；重连不弹认证或信任提示。这些选项写入转发记录，start/restart 沿用，`--reconnect=false` 关闭。首次启动失败仍直接报错。
 
 脚本里解析状态用 `f ls --json`，字段为 `id`、`name`、`listen`、`target`、`pid`、`status`、`started`、`error`；空列表输出 `[]`。单条记录损坏时该条 `status` 为 `corrupt` 并在 `error` 里给出原因，其余记录照常列出；`corrupt` 记录无法通过 CLI 核验或停止，别把它当成已停止。
 
@@ -131,13 +175,41 @@ ah history show 12
 ah history run 12
 ```
 
-没有 `NAME:` 前缀就是本地路径；含冒号的本地文件使用 `./` 或绝对路径。核对源、目标、当前目录和覆盖意图。只支持单个普通文件，父目录需存在；远端到远端经本机中转，无需两台服务器互相连接。
+没有 `NAME:` 前缀就是本地路径；含冒号的本地文件使用 `./` 或绝对路径。核对源、目标、当前目录和覆盖意图。不加 `-r` 时源必须是单个普通文件，目标父目录需存在；远端到远端经本机中转，无需两台服务器互相连接。
 
-默认拒绝覆盖，只有明确要求替换时加 `--force`；替换配置等重要文件时优先 `--backup`，它隐含覆盖并在同目录保留旧版本（默认最近 5 份，`--backup-keep N` 调整），还原用 `ah backup ls NAME:PATH` 看版本（1 为最新），`ah backup restore NAME:PATH [序号|时间戳前缀]` 还原，默认最新；还原前会自动备份当前版本，还原错了再 `b restore` 即可撤回，别手工 mv 覆盖。内容和权限都没变的文件会跳过（输出 unchanged），不产生多余备份。`-r` 按 cp -r 规则：目标是已有目录时落到“目标/源目录名”；落点已存在时要 `-f` 或 `--backup` 才合并，多余文件不删；符号链接跳过并打印 Skipped，需要时单独处理。树复制中途失败会留下已复制的部分。`rm NAME` 只删连接，不是远端文件删除命令。断点续传及通配符展开不是 cp 功能。
+默认拒绝覆盖，只有明确要求替换时加 `--force`；替换配置等重要文件时优先 `--backup`，它隐含覆盖并在同目录保留旧版本（默认最近 5 份，`--backup-keep N` 调整），还原用 `ah backup ls NAME:PATH` 看版本（1 为最新），`ah backup restore NAME:PATH [序号|时间戳前缀]` 还原，默认最新；还原前会自动备份当前版本，还原错了再 `b restore` 即可撤回，别手工 mv 覆盖。内容和权限都没变的文件会跳过（输出 unchanged），不产生多余备份。`-r` 按 cp -r 规则：目标是已有目录时落到“目标/源目录名”；落点已存在时要 `-f` 或 `--backup` 才合并，多余文件不删；符号链接跳过并打印 Skipped，需要时单独处理。树复制中途失败会留下已复制的部分。`rm NAME` 只删连接，不是远端文件删除命令。源路径不做通配符展开。
+
+覆盖、合并目录或用户不确定结果时，先加 `--dry-run`：它显示最终落点和 mkdir/merge/add/replace/unchanged/exclude/backup 等操作，不写目标、不建备份、不记历史，但仍需正常认证。`-r --exclude PATTERN` 可重复，不含 `/` 的模式匹配任意层级的文件名，尾部 `/` 只匹配目录，`**` 不是递归通配。
+
+大文件或不稳定链路用 `--resume`：失败后保留 `.ah-resume-*` 片段并在错误里给出路径，用同样的源和目标重跑即可续传（目录续传重跑需 `-f` 或 `--backup`）。它会完整预读源文件做校验，不保证省流量；确认不再需要时，失败片段要手工删除。
 
 重跑前用 `show ID` 核对目标及原 force；在原授权范围内直接 `run ID`，不要 `eval` 输出。重跑保留原 cwd 和配置/密钥/known_hosts 路径，但使用当前连接定义（代理/sudo 可能已变），并新增历史。不要把重跑当成回滚文件内容。用户要求不覆盖时，不能直接重跑带 force 的历史，应使用 `history run ID --force=false`。
 
 复制以退出码、字节数和相应历史状态核对；失败先检查具体错误及目标，发布响应丢失时目标可能已存在，避免盲目加 force 重试。历史不可写时复制不会开始。
+
+### 目录对比与同步
+
+```sh
+ah diff ./dist web:/srv/app
+ah sync --dry-run ./dist web:/srv/app
+ah sync ./dist web:/srv/app
+ah sync --delete --dry-run --exclude 'uploads/' ./dist web:/srv/app
+```
+
+两端都是目录，四种本地/远端方向都支持。与 `cp -r` 不同，源目录的内容直接对应到目标目录，不追加源目录名。`diff` 列出 add/mkdir/modify/target-only/conflict；`sync` 默认只新增和更新，保留目标多余项。
+
+`--delete` 会删除目标独有的普通文件和空目录，只在用户明确要求镜像或删除多余文件时使用，先跑同参数的 `--dry-run` 把 `delete` 项给用户看。会产生运行时数据的目录（上传、日志、缓存）用 `--exclude` 保护，命中的目标项不会被删。`conflict`（文件与目录类型不同）会让同步在写入前报错，需要人工处理。同步逐文件原子替换但整体非原子，失败时已完成的更新保留、删除不再继续。同步写入历史，`history run` 重跑带 `--delete` 的记录同样会删文件。
+
+### 配置导出与迁移
+
+```sh
+ah config export ./connections.toml               # 不含任何凭据
+ah config export ./backup.ah --with-secrets       # 加密包，交互设置独立口令
+ah config import ./backup.ah --dry-run
+ah config import ./backup.ah
+```
+
+导入默认合并，同名报错；`--force` 用导入的完整定义替换同名连接，用不含凭据的 TOML 替换会清掉原有密码，先 `--dry-run` 看 add/replace。口令只能交互输入或用 `--passphrase-file`（仅所有者可读的普通文件），不要放在命令行。私钥文件、known_hosts、历史和转发记录不随配置迁移。
 
 ### 代理与补全
 
@@ -146,7 +218,7 @@ ah edit nas --proxy socks5://127.0.0.1:1080 --proxy socks5://proxy2.internal:108
 ah edit nas --clear-proxy
 ```
 
-重复 `--proxy` 按“本机 → 第一跳 → 第二跳 → 目标”保存，edit 替换整条链而非追加。支持 SOCKS5（也接受 HOST:PORT、socks5h://），不能用 SSH 跳板名称代替。旧 proxy 字段仍可读取，重复 --proxy 改存 proxies 数组。认证 URL 可用，但其中凭据原样保存，不属于密码加密功能，避免写入日志或共享文件。后续域名由上一跳解析，失败不回退直连。
+重复 `--proxy` 按“本机 → 第一跳 → 第二跳 → 目标”保存，edit 替换整条链而非追加。支持 SOCKS5（也接受 HOST:PORT、socks5h://）；经 SSH 跳板机用 `--jump`，不要写进 `--proxy`。旧 proxy 字段仍可读取，重复 --proxy 改存 proxies 数组。认证 URL 可用，但其中凭据原样保存，不属于密码加密功能，避免写入日志或共享文件。后续域名由上一跳解析，失败不回退直连。
 
 代理连接超时时，先区分本地代理连接、SOCKS5 CONNECT 和 SSH 握手阶段。代理端口监听正常不代表 VPN 隧道已建立；可用同代理下的已知主机作对照，检查 VPN 登录状态、隧道接口和目标路由，再决定是否需要在授权范围内重连。尚未建立 TCP 连接时不归因为 SSH 密码错误，也不靠关闭主机校验解决。
 
