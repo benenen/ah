@@ -44,7 +44,7 @@ func New() *cobra.Command {
 		}
 		return nil
 	}
-	root.AddCommand(a.configCommand(), a.directoryCommand(false), a.directoryCommand(true), a.doctorCommand(), a.connectionCopyCommand(false), a.connectionCopyCommand(true), a.listCommand(), a.inspectCommand(), a.newCommand(), a.editCommand(), a.removeCommand(), a.connectCommand(), a.forwardCommand(), a.copyCommand(), a.backupCommand(), a.historyCommand(), completionCommand(), versionCommand())
+	root.AddCommand(a.execCommand(), a.configCommand(), a.directoryCommand(false), a.directoryCommand(true), a.doctorCommand(), a.connectionCopyCommand(false), a.connectionCopyCommand(true), a.listCommand(), a.inspectCommand(), a.newCommand(), a.editCommand(), a.removeCommand(), a.connectCommand(), a.forwardCommand(), a.copyCommand(), a.backupCommand(), a.historyCommand(), completionCommand(), versionCommand())
 	for _, command := range root.Commands() {
 		if len(command.Aliases) > 0 {
 			command.Short += " (alias: " + strings.Join(command.Aliases, ", ") + ")"

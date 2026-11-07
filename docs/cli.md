@@ -8,6 +8,7 @@
 - [全局选项](#全局选项)
 - [连接管理](#连接管理)
 - [交互登录与远程命令](#交互登录与远程命令)
+- [按标签批量执行](#按标签批量执行)
 - [端口转发](#端口转发)
 - [文件复制](#文件复制)
 - [目录差异与同步](#目录差异与同步)
@@ -41,6 +42,7 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | `ah edit NAME [flags]` | 只更新明确传入的字段 |
 | `ah rm NAME` | 删除保存的连接记录，不删除远端文件 |
 | `ah connect NAME [COMMAND [ARG...]]` | 交互登录或执行远程命令 |
+| `ah exec --tag TAG -- COMMAND [ARG...]` | 按标签并发执行，输出主机前缀及退出码汇总 |
 | `ah c NAME [COMMAND [ARG...]]` | `connect` 的简写 |
 | `ah forward NAME LOCAL TARGET` | 通过 SSH 转发 TCP 端口；`-D` 起 SOCKS5 代理，`-R` 远程转发 |
 | `ah cp SOURCE DESTINATION` | 单个普通文件的本地/远端复制 |
@@ -533,3 +535,19 @@ ah config import ./backup.ah
 导出文件为 0600，父目录须存在；已有文件需 `config export --force` 才能替换，不能覆盖当前配置、密钥、known_hosts、历史库及辅助文件或当前口令文件。普通 TOML 不接受直接携带绑定源主密钥的 enc:v1 密码，迁移密码需用加密包。文件大小最多 16 MiB。
 
 加密导入、导出可传 `--passphrase-file /path/to/private-file`，代替交互输入；文件须为普通文件，Unix 下仅所有者可访问，末尾 LF/CRLF 不计入口令。口令不可用明文参数传入。私钥文件、主机信任、复制历史和转发记录不迁移；私钥路径原样保留，目标机器上按需修改。
+
+## 按标签批量执行
+
+```sh
+ah exec --tag prod --dry-run -- 'df -h'
+ah exec --tag prod --jobs 4 -- 'df -h'
+ah exec --tag prod,web --jobs 2 --exec-timeout 30s -- 'systemctl status nginx'
+```
+
+至少一个标签和 `--` 分隔符是必需的。多个标签取交集，忽略大小写；无匹配时报错。`--dry-run` 只列出选中的连接名，不联网。`--` 后参数按 SSH 规则用空格拼接，远程管道、重定向和需要保留的引号请整体引用。
+
+并发默认 4 台，`--jobs` 范围 1–64。单台失败继续其他目标，不自动重试。`--exec-timeout` 限制每台从连接到命令完成的总时间，默认 0 不限时，负数拒绝；全局 `--timeout` 仍为连接/握手超时。
+
+stdout/stderr 分别实时输出，每行带 `[连接名]`；结尾没有换行时补换行，单行超 32 KiB 则分段补换行。stderr 末尾按名称列出状态、远程退出码和错误，并汇总 success/failed/canceled/not-run。未取得远程退出码显示 `-`。全部成功退出 0，任何单台失败/超时退出 1，整体取消退出 130。
+
+不申请 PTY、不读取本地 stdin、不弹认证或主机信任提示。使用保存的 SSH/sudo 密码、agent、无需交互的私钥或免密 sudo；先用普通连接完成主机信任。显式全局 `--trust-new-host` 可接受首次密钥，变化密钥仍拒绝。代理、跳板、sudo 和保活沿用连接配置；Ctrl+C 关闭活动连接，后续排队机器不再启动，不保证远程操作回滚。输出写入失败也会取消整批；不写复制历史。
