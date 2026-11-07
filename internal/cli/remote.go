@@ -41,27 +41,32 @@ func (a *app) sshOptions(cmd *cobra.Command) sshclient.Options {
 	return opts
 }
 func (a *app) connectCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "connect NAME [COMMAND [ARG...]]", Aliases: []string{"c"}, Short: "Open an SSH shell or execute a remote command", Args: cobra.MinimumNArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) (err error) {
-		input, ok := cmd.InOrStdin().(*os.File)
-		if !ok {
-			return fmt.Errorf("connect requires terminal input")
-		}
-		c, err := a.connection(args[0])
-		if err != nil {
-			return err
-		}
-		client, err := a.dialSSH(cmd.Context(), cmd, args[0], c, a.connectionSSHOptions(cmd, args[0], c, true), true)
-		if err != nil {
-			return err
-		}
-		defer func() { err = errors.Join(err, client.Close()) }()
-		if len(args) > 1 {
-			// OpenSSH sends a space-joined command for the remote shell to parse.
-			return client.Exec(strings.Join(args[1:], " "), input, cmd.OutOrStdout(), cmd.ErrOrStderr())
-		}
-		return client.Shell(input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	cmd := &cobra.Command{Use: "connect NAME [COMMAND [ARG...]]", Aliases: []string{"c"}, Short: "Open an SSH shell or execute a remote command", Args: cobra.MinimumNArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) error {
+		return a.runConnect(cmd, args)
 	}}
 	// Options following NAME belong to the remote command, even if they match ah flags.
 	cmd.Flags().SetInterspersed(false)
 	return cmd
+}
+
+// runConnect is shared by explicit connections and the interactive picker.
+func (a *app) runConnect(cmd *cobra.Command, args []string) (err error) {
+	input, ok := cmd.InOrStdin().(*os.File)
+	if !ok {
+		return fmt.Errorf("connect requires terminal input")
+	}
+	c, err := a.connection(args[0])
+	if err != nil {
+		return err
+	}
+	client, err := a.dialSSH(cmd.Context(), cmd, args[0], c, a.connectionSSHOptions(cmd, args[0], c, true), true)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, client.Close()) }()
+	if len(args) > 1 {
+		// OpenSSH sends a space-joined command for the remote shell to parse.
+		return client.Exec(strings.Join(args[1:], " "), input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	}
+	return client.Shell(input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

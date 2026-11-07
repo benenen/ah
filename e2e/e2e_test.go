@@ -38,6 +38,7 @@ func TestLab(t *testing.T) {
 		{"FeatureExtensions", testFeatureExtensions},
 		{"DirectorySync", testDirectorySync},
 		{"BatchExec", testBatchExec},
+		{"Pick", testPick},
 		{"Forwards", testForwards},
 		{"SudoWithoutPassword", testSudoWithoutPassword},
 		{"SudoWithPassword", testSudoWithPassword},

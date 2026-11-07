@@ -497,3 +497,17 @@ ah exec --tag prod --tag web --jobs 2 --exec-timeout 30s -- 'systemctl status ng
 stdout、stderr 各自实时输出，每行带 `[连接名]` 前缀；无结尾换行的尾部内容在结束时补换行，超过 32 KiB 的单行分段输出，以限制内存。stderr 最后按连接名排序输出 NAME/STATUS/EXIT/ERROR 和成功、失败、取消、未启动数量。全部成功退出 0，存在失败或单台超时退出 1，整体取消退出 130；各台远程退出码在表中保留，未取得退出码时显示 `-`。
 
 批量执行不申请 PTY、不读取本地 stdin，也不弹 SSH/sudo 密码、私钥口令或首次信任提示。可使用保存的密码、SSH agent、无需口令的私钥及保存的 sudo 密码/免密 sudo；首次使用前可逐台 `ah c NAME` 确认指纹。显式全局 `--trust-new-host` 可接受并保存首次密钥，已有密钥变化仍拒绝。复用代理、跳板和 sudo 配置，不记录复制历史。
+
+### 交互选择连接
+
+```sh
+ah pick                     # 打开连接选择器
+ah pick prod                # 预填搜索关键词
+ah pick --tag prod --tag web # 仅在同时带这些标签的连接中选择
+```
+
+直接输入文字会实时筛选连接名、主机地址（含端口）、用户名、标签和备注。多个空格分隔的关键词取交集，忽略大小写。↑/↓、Tab 或 Ctrl+N/Ctrl+P 切换选中项，Enter 连接；Backspace 删除一个 Unicode 字符，Ctrl+U 清空搜索。无匹配项时可继续编辑，Enter 不执行连接。即使只有一项，也需 Enter 确认。
+
+Esc 或 Ctrl+D 正常退出，Ctrl+C 取消并返回 130。选择阶段只读本地配置，不联网；确认后先退出选择界面、恢复终端，再进入与 `ah c NAME` 相同的 SSH 会话，沿用密码、sudo、代理、跳板、TERM、保活和主机密钥校验。
+
+选择器仅支持 macOS/Linux，需要 stdin 和 stderr 都是交互终端；界面写到 stderr，使用临时独立屏幕，退出后恢复原屏幕。窗口过小时提示调整大小，暂停 Enter 选择。列表显示名称、用户、地址、标签和备注，长内容按窗口宽度截断，不显示密码、代理凭据或私钥内容。

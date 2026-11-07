@@ -7,6 +7,7 @@
 - [准备与命令总览](#准备与命令总览)
 - [全局选项](#全局选项)
 - [连接管理](#连接管理)
+- [交互选择连接](#交互选择连接)
 - [交互登录与远程命令](#交互登录与远程命令)
 - [按标签批量执行](#按标签批量执行)
 - [端口转发](#端口转发)
@@ -37,6 +38,7 @@ make install               # 安装到 GOBIN 或 GOPATH/bin
 | --- | --- |
 | `ah list` | 列出连接名、主机、端口、登录用户、标签和备注；支持 `--tag` 与关键词筛选 |
 | `ah config export FILE` / `ah config import FILE` | 导出、备份和迁移整份连接配置 |
+| `ah pick [QUERY...] [--tag TAG...]` | 搜索连接并按 Enter 进入 SSH |
 | `ah inspect NAME` | 以 JSON 输出单个连接配置；凭据只显示是否已配置 |
 | `ah new NAME --host HOST --user USER` | 创建连接；不会主动连接服务器 |
 | `ah edit NAME [flags]` | 只更新明确传入的字段 |
@@ -551,3 +553,24 @@ ah exec --tag prod,web --jobs 2 --exec-timeout 30s -- 'systemctl status nginx'
 stdout/stderr 分别实时输出，每行带 `[连接名]`；结尾没有换行时补换行，单行超 32 KiB 则分段补换行。stderr 末尾按名称列出状态、远程退出码和错误，并汇总 success/failed/canceled/not-run。未取得远程退出码显示 `-`。全部成功退出 0，任何单台失败/超时退出 1，整体取消退出 130。
 
 不申请 PTY、不读取本地 stdin、不弹认证或主机信任提示。使用保存的 SSH/sudo 密码、agent、无需交互的私钥或免密 sudo；先用普通连接完成主机信任。显式全局 `--trust-new-host` 可接受首次密钥，变化密钥仍拒绝。代理、跳板、sudo 和保活沿用连接配置；Ctrl+C 关闭活动连接，后续排队机器不再启动，不保证远程操作回滚。输出写入失败也会取消整批；不写复制历史。
+
+## 交互选择连接
+
+```sh
+ah pick
+ah pick prod
+ah pick --tag prod,web
+```
+
+直接输入关键词搜索名称、主机/端口、用户名、标签和备注，忽略大小写，空格分隔的多个关键词取交集；`--tag` 限定候选范围，也可重复传入。
+
+| 按键 | 操作 |
+| --- | --- |
+| ↑/↓、Tab、Ctrl+N/P | 切换选中连接 |
+| Enter | 确认并连接；无匹配时继续等待 |
+| Backspace | 删除一个 Unicode 字符 |
+| Ctrl+U | 清空搜索 |
+| Esc、Ctrl+D | 正常退出，不连接 |
+| Ctrl+C | 取消，返回 130 |
+
+仅支持 macOS/Linux，stdin、stderr 必须是交互终端。界面使用 stderr 的临时独立屏幕，长内容截断，窗口过小时提示调整并暂停 Enter；退出或取消后恢复终端。列表仅显示名称、用户、地址、标签和备注，不显示凭据。选择阶段不联网或修改配置；确认后恢复终端并执行与 `ah c NAME` 相同的 SSH 连接，包括既有认证、首次主机信任提示和 sudo 行为。
