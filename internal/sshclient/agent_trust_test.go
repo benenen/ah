@@ -57,11 +57,12 @@ func TestAgentAuthenticationAfterSlowTrustDecision(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", socket)
 	t.Setenv("HOME", t.TempDir())
 	// No identity file or password fallback: authentication must sign via agent.
+	// The decision outlasts Timeout, which still leaves room for slow -race runs.
 	f.Connection.IdentityFile = ""
 	c, err := sshclient.Dial(ctx, f.Connection, sshclient.Options{
-		KnownHosts: filepath.Join(t.TempDir(), "known_hosts"), Timeout: 200 * time.Millisecond,
+		KnownHosts: filepath.Join(t.TempDir(), "known_hosts"), Timeout: time.Second,
 		TrustHost: func(string, string) (bool, error) {
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(1500 * time.Millisecond)
 			return true, nil
 		},
 	})
