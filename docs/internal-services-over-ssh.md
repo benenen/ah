@@ -94,7 +94,7 @@ Host tunnels
   ServerAliveInterval 30
 ```
 
-用 ah 的差别：复用已保存连接的认证/代理链/known_hosts，能后台运行并管理生命周期；但**不自动重连，机器重启后也不会恢复**，需要常驻时用 autossh 或 launchd/systemd 拉起。
+用 ah 的差别：复用已保存连接的认证/代理链/known_hosts，能后台运行并管理生命周期；可用 [`--reconnect`](cli.md#转发自动重连) 在断线后自动重连；机器重启后不会自动恢复，需要开机启动时可用 launchd/systemd 管理。
 
 ## 复现这个环境
 
