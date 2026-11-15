@@ -6,11 +6,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +85,9 @@ func TestPOSIXShellSelection(t *testing.T) {
 }
 
 // startedShell reports how an interactive session asked the server to start.
-func startedShell(t *testing.T, version string, c config.Connection, opts Options) string {
+// startedShell starts an interactive shell, or runs command when it is
+// nonempty, and reports what the server was asked to start.
+func startedShell(t *testing.T, version string, c config.Connection, opts Options, command ...string) string {
 	t.Helper()
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -155,7 +159,12 @@ func startedShell(t *testing.T, version string, c config.Connection, opts Option
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = client.Shell(terminal, io.Discard, io.Discard); err != nil {
+	if len(command) > 0 {
+		err = client.Exec(command[0], nil, io.Discard, io.Discard)
+	} else {
+		err = client.Shell(terminal, io.Discard, io.Discard)
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -186,5 +195,45 @@ func TestShellChoiceReachesServer(t *testing.T) {
 				t.Fatalf("got %q want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestWindowsPowerShellCommands(t *testing.T) {
+	const windows = "SSH-2.0-OpenSSH_for_Windows_9.5"
+	const linux = "SSH-2.0-OpenSSH_9.8p1"
+	command := `Get-ChildItem "C:\Program Files" & echo %PATH% | findstr x`
+	for _, tc := range []struct {
+		name, version, shell, want string
+	}{
+		{"cmd default keeps the command", windows, "", "exec " + command},
+		{"other Windows shell keeps the command", windows, "bash", "exec " + command},
+		{"POSIX keeps the command", linux, "pwsh", "exec " + command},
+		{"pwsh wraps", windows, "pwsh", "exec " + powerShellCommand("pwsh", command)},
+		{"powershell path wraps", windows, `C:\Windows\System32\WindowsPowerShell\v1.0\PowerShell.exe`, "exec " + powerShellCommand(`C:\Windows\System32\WindowsPowerShell\v1.0\PowerShell.exe`, command)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := startedShell(t, tc.version, config.Connection{Shell: tc.shell}, Options{}, command); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPowerShellCommandEncoding(t *testing.T) {
+	command := "Write-Output '中文' & \"%PATH%\""
+	wrapped := powerShellCommand("pwsh", command)
+	// Only base64 may sit between the quotes cmd.exe sees, so cmd metacharacters
+	// in the user's command never reach cmd.
+	match := regexp.MustCompile(`^pwsh -NoLogo -NoProfile -NonInteractive -Command "& \(\[scriptblock\]::Create\(\[Text\.Encoding\]::UTF8\.GetString\(\[Convert\]::FromBase64String\('([A-Za-z0-9+/=]+)'\)\)\)\)"$`).FindStringSubmatch(wrapped)
+	if match == nil {
+		t.Fatalf("unexpected wrapper %q", wrapped)
+	}
+	script, err := base64.StdEncoding.DecodeString(match[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(script), "\n")
+	if len(lines) != 5 || lines[1] != command || !strings.Contains(lines[0], "UTF8Encoding") || lines[3] != "} | Out-Default" || !strings.Contains(lines[4], "exit $LASTEXITCODE") {
+		t.Fatalf("script %q", script)
 	}
 }

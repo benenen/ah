@@ -85,7 +85,7 @@ user = "bob"
 
 pty-req 的 TERM 优先级为全局 `--term` > 连接 TOML 的 `term` > 本地 `$TERM` > `xterm-256color`；`term` 字段校验不含空白与控制字符。new 默认保存 `term = "xterm-256color"`，可用 `--term` 覆盖或 `--term ''` 使用本地 `$TERM`；edit 用 `--term` 设置、`--clear-term` 清除。该字段用于远端 terminfo 缺少本地终端类型的场景，否则远端行编辑会退化。
 
-交互 shell 优先级为全局 `--shell` > 连接 TOML 的 `shell` > 平台默认（Windows `cmd.exe`、macOS `zsh`、其他 `bash`）；`default` 表示发 shell 请求，使用服务器的登录 shell。值只能是名字或路径（字母、数字和 `. _ + - / \ :`），因为它会被拼进远端命令。Windows 按 SSH 版本号中的 `Windows` 识别，选中的 shell 名作为 exec 命令发出；其他平台发 `exec /bin/sh -c '…'`，由远端 `uname -s` 选择默认值、以 `-l` 启动，找不到时退回 `$SHELL -l`（显式指定的会先在 stderr 提示）。仍按原规则申请 PTY；带命令执行和 sudo 交互不受影响。new/edit `--shell` 设置，edit 传空字符串清除；list 增加 SHELL 列，`list --json` 和 inspect 输出 shell。
+交互 shell 优先级为全局 `--shell` > 连接 TOML 的 `shell` > 平台默认（Windows `cmd.exe`、macOS `zsh`、其他 `bash`）；`default` 表示发 shell 请求，使用服务器的登录 shell。值只能是名字或路径（字母、数字和 `. _ + - / \ :`），因为它会被拼进远端命令。Windows 按 SSH 版本号中的 `Windows` 识别，选中的 shell 名作为 exec 命令发出；其他平台发 `exec /bin/sh -c '…'`，由远端 `uname -s` 选择默认值、以 `-l` 启动，找不到时退回 `$SHELL -l`（显式指定的会先在 stderr 提示）。仍按原规则申请 PTY；sudo 交互不受影响。带命令执行仍交给服务器默认 shell，只有 Windows 且 shell 的文件名为 pwsh/powershell（忽略大小写和 .exe）时改由该 PowerShell 执行：命令以 UTF-8 base64 放进 `-Command` 的 scriptblock 中解码执行（不用常被安全软件拦截的 -EncodedCommand），设置 UTF-8 输出和 PlainText 渲染，经 Out-Default 刷出格式化输出后，最后一条语句失败时以原生退出码（无则 1）退出。new/edit `--shell` 设置，edit 传空字符串清除；list 增加 SHELL 列，`list --json` 和 inspect 输出 shell。
 
 ## SOCKS5 代理契约
 

@@ -244,7 +244,9 @@ ah --shell powershell c winbox     # 临时改用 Windows PowerShell
 ah edit nas --shell default        # 交给服务器决定，等同于旧行为
 ```
 
-Windows 主机按 SSH 版本号里的 `OpenSSH_for_Windows` 识别，选中的 shell 交给服务器的 DefaultShell 去启动；其他主机在远端用 `uname -s` 区分 macOS 和其他系统，再以 `-l` 登录方式启动。指定的 shell 在远端不存在时，会提示一行并退回用户自己的登录 shell，不会直接断开。除 `default` 外，ah 都通过 exec 请求启动 shell，所以 sshd 不再打印 motd 和 “Last login”，需要的话设 `--shell default`。带命令执行（`ah c NAME CMD`、`ah exec`）和 sudo 连接不受这个设置影响。`shell` 只接受名字或路径（字母、数字和 `. _ + - / \ :`），不能带参数。
+Windows 主机按 SSH 版本号里的 `OpenSSH_for_Windows` 识别，选中的 shell 交给服务器的 DefaultShell 去启动；其他主机在远端用 `uname -s` 区分 macOS 和其他系统，再以 `-l` 登录方式启动。指定的 shell 在远端不存在时，会提示一行并退回用户自己的登录 shell，不会直接断开。除 `default` 外，ah 都通过 exec 请求启动 shell，所以 sshd 不再打印 motd 和 “Last login”，需要的话设 `--shell default`。sudo 连接不受这个设置影响。
+
+带命令执行（`ah c NAME CMD`、`ah exec`）一般仍由服务器的默认 shell 解释，例外是 Windows 连接的 shell 设成了 `pwsh` 或 `powershell`（也可以写完整路径）：这时命令交给 PowerShell 执行，`ah c winbox ls`、`ah c winbox 'Get-Process | Select -First 3'` 都能直接用。ah 把命令放进 base64 后由 `-Command` 解码执行，所以 cmd 不会解释其中的 `&`、`|`、`%VAR%` 和引号。输出统一为 UTF-8、不带颜色，最后一条命令失败时返回它的原生退出码，原生命令可以读 stdin（PowerShell 的 `$input` 读不到）。没有用 `-EncodedCommand`，是因为不少安全软件会拦截它。经过 cmd 之后命令行总长不能超过约 8 KB，所以命令文本大约要控制在 5 KB 以内。`shell` 只接受名字或路径（字母、数字和 `. _ + - / \ :`），不能带参数。
 
 ## 按标签批量执行
 

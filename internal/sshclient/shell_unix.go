@@ -125,7 +125,7 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 			err = session.Shell()
 		}
 	} else {
-		err = session.Start(command)
+		err = session.Start(remoteCommand(c.shell, isWindowsServer(c.client.ServerVersion()), command))
 	}
 	if err != nil {
 		return err
