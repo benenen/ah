@@ -3,13 +3,16 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/benenen/ah/internal/config"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 type inspectedProxy struct {
@@ -27,6 +30,9 @@ type inspectedConnection struct {
 	IdentityFile           string           `json:"identity_file"`
 	PasswordConfigured     bool             `json:"password_configured"`
 	Proxies                []inspectedProxy `json:"proxies"`
+	ProxyCommand           string           `json:"proxy_command"`
+	HostKeyAlias           string           `json:"host_key_alias"`
+	HostKeyIdentity        string           `json:"host_key_identity"`
 	Sudo                   bool             `json:"sudo"`
 	SudoPasswordConfigured bool             `json:"sudo_password_configured"`
 	SudoShell              string           `json:"sudo_shell"`
@@ -81,10 +87,15 @@ func (a *app) inspectCommand() *cobra.Command {
 			if terminal == "" {
 				terminal = "xterm-256color"
 			}
+			identity := c.HostKeyIdentity(args[0])
+			if identity == "" {
+				identity = knownhosts.Normalize(net.JoinHostPort(c.Host, strconv.Itoa(c.Port)))
+			}
 			// Use an explicit output model so newly added credential fields cannot leak.
 			info := inspectedConnection{
 				Jump: c.Jump, Name: args[0], ConfigFile: path, Host: c.Host, Port: c.Port, User: c.User,
 				IdentityFile: c.IdentityFile, PasswordConfigured: c.Password != "", Proxies: proxies,
+				ProxyCommand: c.ProxyCommand, HostKeyAlias: c.HostKeyAlias, HostKeyIdentity: identity,
 				Sudo: c.Sudo, SudoPasswordConfigured: c.SudoPassword != "", SudoShell: c.SudoShell,
 				SFTPServer: c.SFTPServer, Term: c.Term, EffectiveTerm: terminal,
 				Tags: append([]string{}, c.Tags...), Note: c.Note,

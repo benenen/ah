@@ -90,6 +90,11 @@ pty-req 的 TERM 优先级为全局 `--term` > 连接 TOML 的 `term` > 本地 `
 连接 TOML 的 proxies 字符串数组按跳序保存代理。new/edit 支持重复 --proxy，edit 替换整条链，--clear-proxy 恢复直连；未指定时保留已有配置。地址支持 HOST:PORT 或 socks5://HOST:PORT（IPv6 必须加方括号），同时支持 socks5h URL 和代理认证；代理凭据原样存储，错误不得回显凭据。
 SSH 统一拨号路径用于 connect/c/cp/远程补全；第一跳本机解析，后续跳和目标由前一跳解析。使用同一握手 context 约束所有跳，超时/取消关闭链路，不回退直连。主机密钥始终按最终目标校验，不把 TCP 代理身份当作目标身份。
 
+## ProxyCommand 契约
+
+连接 TOML 可选 `proxy_command`，由 `new/edit --proxy-command` 设置，空字符串清除；与 `jump`、`proxies`/`proxy` 互斥，跳板连接自身可配置。命令为单行、不含控制字符，只接受 `%h %p %r %%` 这几种占位符，host/user 展开时做 shell 引用。ah 经 `/bin/sh -c`（Windows `cmd.exe /C`）在独立进程组中启动命令，stdin/stdout 作为 SSH 传输；握手超时、取消或关闭连接时杀掉整个进程组并回收，stderr 只在内存中保留最后 4 KiB，失败时附在错误中。诊断阶段名为 `proxy-command`。
+主机密钥按 `host_key_alias` 校验（`--host-key-alias` 设置），未设置且配置了 proxy_command 时取连接名；别名按 OpenSSH HostKeyAlias 的方式不带端口写入 known_hosts，传输对端地址不能顶替这个身份。clone/rename 把原连接名固定为新连接的 `host_key_alias`。inspect 输出 proxy_command、host_key_alias 和实际使用的 host_key_identity。`config import` 遇到含 proxy_command 的连接时，非 dry-run 必须带 `--allow-proxy-command`，dry-run 列出 `proxy-command NAME CMD`。
+
 ## sudo 提权契约
 
 每个连接支持 sudo 布尔开关、独立加密的 sudo_password 和可选绝对路径 sftp_server。new/edit --sudo 设置开关，--sudo=false 关闭；--sudo-password 隐藏输入并加密保存，--clear-sudo-password 删除，仅保存密码不自动开启。sudo 密码密文使用 name/sudo AAD，不能与 SSH 密码互换，不得保存明文。

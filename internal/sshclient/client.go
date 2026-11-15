@@ -135,20 +135,38 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		defer agentStop()
 	}
 	address := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
+	// identity is what known_hosts records. An alias is stored without a port,
+	// as OpenSSH HostKeyAlias does, so entries are shared with ssh(1).
+	identity := address
+	if c.HostKeyAlias != "" {
+		identity = net.JoinHostPort(c.HostKeyAlias, "22")
+	}
 	transportStage := "tcp"
 	if len(c.ProxyChain()) > 0 {
 		transportStage = "proxy-chain"
 	}
 	var conn net.Conn
-	if opts.transport != nil {
+	var proxyCommand *commandConn
+	switch {
+	case opts.transport != nil:
 		transportStage = "ssh-jump"
 		conn, err = opts.transport(dialCtx, address)
-	} else {
+	case c.ProxyCommand != "":
+		transportStage = "proxy-command"
+		proxyCommand, err = startProxyCommand(expandProxyCommand(c.ProxyCommand, c.Host, c.Port, c.User), destinationAddr(identity))
+		if err == nil {
+			conn = proxyCommand
+		}
+	default:
 		conn, err = dialTransport(dialCtx, address, c.ProxyChain())
 	}
 	report(transportStage, err)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", address, err)
+	}
+	if identity != address {
+		// Never let the transport peer stand in for the aliased identity.
+		conn = &destinationConn{Conn: conn, target: destinationAddr(identity)}
 	}
 	stopHandshake := context.AfterFunc(handshakeCtx, func() { conn.Close() })
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
@@ -169,7 +187,7 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		verified = err == nil
 		return err
 	}}
-	sc, ch, reqs, err := ssh.NewClientConn(conn, address, cfg)
+	sc, ch, reqs, err := ssh.NewClientConn(conn, identity, cfg)
 	if err != nil {
 		if verified {
 			report("authentication", err)
@@ -182,6 +200,11 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 	if err != nil {
 		stop()
 		conn.Close()
+		if proxyCommand != nil {
+			if detail := proxyCommand.diagnostics(); detail != "" {
+				err = fmt.Errorf("%w (proxy command stderr: %s)", err, detail)
+			}
+		}
 		if cause := context.Cause(handshakeCtx); cause != nil {
 			return nil, cause
 		}

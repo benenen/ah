@@ -38,6 +38,7 @@ description: 使用 ah CLI 管理命名 SSH 连接、执行远程命令（含按
 | 查看或还原被覆盖的旧版本 | `backup ls TARGET`、`backup restore TARGET [VERSION]` |
 | 查找并复用复制操作 | `history search WORDS...` → `history show ID` → `history run ID` |
 | 持久化代理链 | `edit NAME --proxy ADDRESS --proxy ADDRESS` |
+| 对应 ssh_config 的 ProxyCommand | `new NAME --host H --user U --proxy-command 'CMD %h %p'` |
 | 备份或迁移整份连接配置 | `config export FILE`、`config import FILE --dry-run` → `config import FILE` |
 | 持久化默认提权 | `edit NAME --sudo`，可另加 `--sudo-password` |
 
@@ -219,6 +220,8 @@ ah edit nas --clear-proxy
 ```
 
 重复 `--proxy` 按“本机 → 第一跳 → 第二跳 → 目标”保存，edit 替换整条链而非追加。支持 SOCKS5（也接受 HOST:PORT、socks5h://）；经 SSH 跳板机用 `--jump`，不要写进 `--proxy`。旧 proxy 字段仍可读取，重复 --proxy 改存 proxies 数组。认证 URL 可用，但其中凭据原样保存，不属于密码加密功能，避免写入日志或共享文件。后续域名由上一跳解析，失败不回退直连。
+
+`--proxy-command CMD` 对应 OpenSSH ProxyCommand：用 sh 启动命令，SSH 流量走它的 stdin/stdout，`%h %p %r %%` 会被展开。known_hosts 默认按连接名校验（`--host-key-alias` 可覆盖），因为这类命令的 host 通常都是 127.0.0.1。它与 `--jump`/`--proxy` 互斥。失败时错误里会带上命令的 stderr，doctor 中对应 `proxy-command` 阶段。导入带 proxy_command 的配置需要 `--allow-proxy-command`，导入前先用 `--dry-run` 把命令拿给用户确认，不要自行加这个标志。
 
 代理连接超时时，先区分本地代理连接、SOCKS5 CONNECT 和 SSH 握手阶段。代理端口监听正常不代表 VPN 隧道已建立；可用同代理下的已知主机作对照，检查 VPN 登录状态、隧道接口和目标路由，再决定是否需要在授权范围内重连。尚未建立 TCP 连接时不归因为 SSH 密码错误，也不靠关闭主机校验解决。
 

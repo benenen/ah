@@ -17,6 +17,7 @@
 - [按标签批量执行](#按标签批量执行)
 - [SSH 跳板机](#ssh-跳板机)
 - [SOCKS5 代理链](#socks5-代理链)
+- [ProxyCommand](#proxycommand)
 - [sudo 默认提权](#sudo-默认提权)
 - [连接诊断与保活](#连接诊断与保活)
 - [端口转发](#端口转发)
@@ -131,6 +132,8 @@ ah rm build
 | `--term TERM` | 保存交互终端类型；new 默认 xterm-256color，空字符串使用本地 TERM |
 | `--sudo-shell SHELL` | sudo 交互登录 shell，默认 bash，不可用时回退 /bin/sh |
 | `--proxy ADDRESS` | 保存 SOCKS5 代理；重复传入表示依次多跳 |
+| `--proxy-command CMD` | 像 OpenSSH ProxyCommand 一样经本地命令的 stdin/stdout 连接；空字符串清除 |
+| `--host-key-alias NAME` | known_hosts 中用于校验的名字；配置了 `--proxy-command` 时默认取连接名，空字符串清除 |
 | `--sudo` / `--sudo=false` | 启用/关闭该连接的默认 root 提权 |
 | `--sudo-password` | 隐藏输入独立的 sudo 密码并加密保存；本身不启用 sudo |
 | `--sftp-server PATH` | sudo 模式使用的独立 SFTP 服务绝对路径；空字符串恢复自动探测 |
@@ -272,6 +275,22 @@ ah edit nas --clear-proxy
 地址支持 `HOST:PORT` 或 `socks5://HOST:PORT`，IPv6 使用 `[::1]:1080`。也接受 `socks5h://HOST:PORT`。保留代理 URL 认证支持，但 URL 中的用户名/密码原样存入 TOML，不受 SSH/sudo 密码加密保护；示例使用无认证代理，避免把代理凭据写入命令记录或共享文件。SSH 跳板使用独立的 `--jump` 选项，见 [SSH 跳板机](#ssh-跳板机)。
 
 只有第一跳在本机解析；后续代理和目标域名交给上一跳解析。链路失败不回退直连。规则随连接保存，供登录、命令、复制、历史重跑和远程补全共用。旧 `proxy = "socks5://..."` 单代理配置仍可读取，设置新的 `--proxy` 后改存 `proxies` 数组；两种字段不能同时设置，`--clear-proxy` 清除两者。
+
+## ProxyCommand
+
+对应 `~/.ssh/config` 里的 `ProxyCommand`，例如：
+
+```sh
+ah new shiben --host 127.0.0.1 --port 22 --user shiben \
+  --proxy-command 'uucli proxy aeawswhnguarjyo6 %h %p'
+ah c shiben
+```
+
+ah 用 `/bin/sh -c`（Windows 为 `cmd.exe /C`）启动命令，SSH 流量走它的 stdin/stdout。`%h`、`%p`、`%r` 替换为 host、port、user，其中 host 和 user 会做 shell 引用；`%%` 是字面 `%`，其他 `%` 写法在保存时就会报错。命令的 stderr 只保留在内存里，连接失败时附在错误信息后面。超时、取消或断开连接时会杀掉整个进程组。
+
+这类命令连到的 host 往往都是 `127.0.0.1`，没法区分不同的服务器，所以 known_hosts 默认按连接名校验（和 OpenSSH 的 `Host` 别名一样，不带端口），用 `ssh shiben` 存下的记录可以直接用。`--host-key-alias` 可以指定别的名字。`clone`/`rename` 会把原连接名固定为新连接的 `host_key_alias`，所以已有的 known_hosts 记录照样能匹配。
+
+`proxy_command` 与 `--jump`、`--proxy` 互斥，但跳板连接本身可以配置它。`config import` 遇到带 `proxy_command` 的连接时，`--dry-run` 会列出 `proxy-command NAME CMD`；真正导入必须加 `--allow-proxy-command`，免得别人给的配置文件在本机执行命令。
 
 ## sudo 默认提权
 

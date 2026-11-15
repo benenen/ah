@@ -59,6 +59,11 @@ func (a *app) connectionCopyCommand(move bool) *cobra.Command {
 					return err
 				}
 			}
+			if c.ProxyCommand != "" && c.HostKeyAlias == "" {
+				// The default identity is the alias; pin it so the same server
+				// keeps matching its existing known_hosts entry.
+				c.HostKeyAlias = old
+			}
 			entries[next] = c
 			if move {
 				delete(entries, old)

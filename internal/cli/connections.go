@@ -78,6 +78,8 @@ func connectionFlags(cmd *cobra.Command, c *config.Connection) {
 	cmd.Flags().StringVar(&c.SudoShell, "sudo-shell", "", "login shell for an escalated interactive session (default bash, falls back to /bin/sh)")
 	cmd.Flags().StringVar(&c.Term, "term", c.Term, "TERM to send for interactive sessions (empty to use $TERM)")
 	cmd.Flags().StringArrayVar(&c.Proxies, "proxy", nil, "SOCKS5 HOST:PORT or socks5://HOST:PORT; repeat in hop order")
+	cmd.Flags().StringVar(&c.ProxyCommand, "proxy-command", "", "local command carrying the SSH stream on stdin/stdout, like OpenSSH ProxyCommand; %h, %p, %r expand (empty clears it)")
+	cmd.Flags().StringVar(&c.HostKeyAlias, "host-key-alias", "", "known_hosts name to verify instead of host (defaults to the connection name with --proxy-command; empty clears it)")
 	cmd.Flags().StringVar(&c.Host, "host", "", "hostname or IP address")
 	cmd.Flags().IntVarP(&c.Port, "port", "p", 22, "SSH port")
 	cmd.Flags().StringVarP(&c.User, "user", "u", "", "SSH username")
@@ -209,6 +211,12 @@ func (a *app) editCommand() *cobra.Command {
 			if clearProxy {
 				c.Proxies = nil
 				c.Proxy = ""
+			}
+			if cmd.Flags().Changed("proxy-command") {
+				c.ProxyCommand = changes.ProxyCommand
+			}
+			if cmd.Flags().Changed("host-key-alias") {
+				c.HostKeyAlias = changes.HostKeyAlias
 			}
 			if cmd.Flags().Changed("host") {
 				c.Host = changes.Host

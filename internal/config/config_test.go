@@ -258,3 +258,38 @@ func TestDefaultPath(t *testing.T) {
 		t.Fatalf("default config path %s", got)
 	}
 }
+
+func TestProxyCommandValidation(t *testing.T) {
+	base := Connection{Host: "127.0.0.1", Port: 22, User: "alice"}
+	valid := base
+	valid.ProxyCommand = "uucli proxy dev %h %p # 100%%"
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []Connection{
+		{ProxyCommand: "uucli %H"},
+		{ProxyCommand: "uucli %"},
+		{ProxyCommand: "a\nb"},
+		{ProxyCommand: "  "},
+		{ProxyCommand: "uucli", Jump: "bastion"},
+		{ProxyCommand: "uucli", Proxies: []string{"127.0.0.1:1080"}},
+		{HostKeyAlias: "a b"},
+		{HostKeyAlias: "*.example"},
+		{HostKeyAlias: "a,b"},
+	} {
+		c.Host, c.Port, c.User = base.Host, base.Port, base.User
+		if c.Validate() == nil {
+			t.Errorf("accepted %#v", c)
+		}
+	}
+	if got := valid.HostKeyIdentity("shiben"); got != "shiben" {
+		t.Fatalf("default identity %q", got)
+	}
+	valid.HostKeyAlias = "device-1"
+	if got := valid.HostKeyIdentity("shiben"); got != "device-1" {
+		t.Fatalf("alias identity %q", got)
+	}
+	if got := base.HostKeyIdentity("plain"); got != "" {
+		t.Fatalf("direct connection identity %q", got)
+	}
+}

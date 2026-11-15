@@ -21,6 +21,12 @@ import (
 
 type Connection struct {
 	Jump string `toml:"jump,omitempty"`
+	// ProxyCommand runs a local command whose stdin/stdout carry the SSH stream,
+	// like OpenSSH ProxyCommand; %h, %p, %r and %% are expanded.
+	ProxyCommand string `toml:"proxy_command,omitempty"`
+	// HostKeyAlias is the known_hosts identity used instead of host. With a
+	// proxy command it defaults to the connection name, see HostKeyIdentity.
+	HostKeyAlias string `toml:"host_key_alias,omitempty"`
 	// Proxy retains compatibility with existing single-proxy configurations.
 	Proxy        string `toml:"proxy,omitempty"`
 	Sudo         bool   `toml:"sudo,omitempty"`
@@ -67,6 +73,19 @@ func (c Connection) HasTag(tag string) bool {
 	return false
 }
 
+// HostKeyIdentity returns the known_hosts alias for the named connection. A
+// proxy command hides the real destination, so host (often 127.0.0.1) cannot
+// distinguish servers; the connection name does, matching OpenSSH's Host alias.
+func (c Connection) HostKeyIdentity(name string) string {
+	if c.HostKeyAlias != "" {
+		return c.HostKeyAlias
+	}
+	if c.ProxyCommand != "" {
+		return name
+	}
+	return ""
+}
+
 // ProxyChain returns the configured hops in traversal order.
 func (c Connection) ProxyChain() []string {
 	if len(c.Proxies) > 0 {
@@ -95,6 +114,23 @@ func (c Connection) Validate() error {
 		if len(c.ProxyChain()) > 0 {
 			return fmt.Errorf("jump and proxies are mutually exclusive; configure proxies on the jump connection")
 		}
+		if c.ProxyCommand != "" {
+			return fmt.Errorf("jump and proxy_command are mutually exclusive; configure proxy_command on the jump connection")
+		}
+	}
+	if c.ProxyCommand != "" {
+		if len(c.ProxyChain()) > 0 {
+			return fmt.Errorf("proxies and proxy_command are mutually exclusive")
+		}
+		if strings.TrimSpace(c.ProxyCommand) == "" || strings.ContainsFunc(c.ProxyCommand, unicode.IsControl) {
+			return fmt.Errorf("proxy_command must be a single-line command without control characters")
+		}
+		if err := validateProxyCommandTokens(c.ProxyCommand); err != nil {
+			return err
+		}
+	}
+	if c.HostKeyAlias != "" && (strings.ContainsFunc(c.HostKeyAlias, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) || strings.ContainsAny(c.HostKeyAlias, ",*?!|#[]/@\\")) {
+		return fmt.Errorf("host_key_alias must be a hostname-like name without whitespace or known_hosts pattern characters")
 	}
 	if c.SudoPassword != "" {
 		if err := credentials.Validate(c.SudoPassword); err != nil {
@@ -155,6 +191,21 @@ func (c Connection) Validate() error {
 	}
 	if strings.ContainsFunc(c.IdentityFile, unicode.IsControl) {
 		return errors.New("identity_file must contain no control characters")
+	}
+	return nil
+}
+
+// validateProxyCommandTokens accepts only the OpenSSH tokens ah expands, so a
+// typo such as %H fails at save time instead of reaching the command line.
+func validateProxyCommandTokens(command string) error {
+	for i := 0; i < len(command); i++ {
+		if command[i] != '%' {
+			continue
+		}
+		if i+1 == len(command) || !strings.ContainsRune("hpr%", rune(command[i+1])) {
+			return fmt.Errorf("proxy_command supports only %%h, %%p, %%r and %%%% tokens")
+		}
+		i++
 	}
 	return nil
 }

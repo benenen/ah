@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/benenen/ah/internal/config"
 	"github.com/benenen/ah/internal/credentials"
@@ -60,7 +61,7 @@ func (a *app) configCommand() *cobra.Command {
 	export.Flags().BoolVar(&withSecrets, "with-secrets", false, "encrypt the export with a passphrase and include SSH, sudo and proxy credentials")
 	export.Flags().BoolVarP(&overwrite, "force", "f", false, "replace an existing export file")
 	export.Flags().StringVar(&exportPassphraseFile, "passphrase-file", "", "read the encryption passphrase from a private file instead of prompting")
-	var force, dryRun bool
+	var force, dryRun, allowProxyCommand bool
 	var importPassphraseFile string
 	imp := &cobra.Command{Use: "import FILE", Short: "Merge exported connections; reject duplicate names unless --force is set", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		data, err := readExportFile(args[0], config.MaxExportSize)
@@ -93,6 +94,11 @@ func (a *app) configCommand() *cobra.Command {
 			plan, err = planConfigImport(entries, bundle.Connections, force)
 			if err != nil {
 				return err
+			}
+			if !dryRun && !allowProxyCommand {
+				if names := proxyCommandNames(bundle.Connections); len(names) > 0 {
+					return fmt.Errorf("connections %s run a local proxy_command; review them with --dry-run, then import with --allow-proxy-command", strings.Join(names, ", "))
+				}
 			}
 			if dryRun {
 				return cmd.Context().Err()
@@ -133,6 +139,7 @@ func (a *app) configCommand() *cobra.Command {
 		return err
 	}}
 	imp.Flags().BoolVarP(&force, "force", "f", false, "replace conflicting connection definitions, including their saved credentials")
+	imp.Flags().BoolVar(&allowProxyCommand, "allow-proxy-command", false, "accept imported connections whose proxy_command runs a local command")
 	imp.Flags().BoolVar(&dryRun, "dry-run", false, "validate and preview additions and replacements without changing configuration or keys")
 	imp.Flags().StringVar(&importPassphraseFile, "passphrase-file", "", "read the decryption passphrase from a private file instead of prompting")
 	cmd.AddCommand(export, imp)
@@ -154,6 +161,9 @@ func planConfigImport(current, incoming map[string]config.Connection, force bool
 			action = "replace"
 		}
 		plan = append(plan, action+"\t"+name)
+		if command := incoming[name].ProxyCommand; command != "" {
+			plan = append(plan, "proxy-command\t"+name+"\t"+command)
+		}
 		merged[name] = incoming[name]
 	}
 	for _, name := range sortedNames(merged) {
@@ -175,6 +185,18 @@ func planConfigImport(current, incoming map[string]config.Connection, force bool
 		}
 	}
 	return plan, nil
+}
+
+// proxyCommandNames lists imported connections that would execute a local
+// command, so an import cannot silently introduce one.
+func proxyCommandNames(entries map[string]config.Connection) []string {
+	var names []string
+	for _, name := range sortedNames(entries) {
+		if entries[name].ProxyCommand != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func exportPassphrase(cmd *cobra.Command, filename string, confirm bool) ([]byte, error) {

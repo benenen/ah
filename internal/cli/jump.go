@@ -17,6 +17,7 @@ func (a *app) dialSSH(ctx context.Context, cmd *cobra.Command, name string, c co
 	var parent *sshclient.Client
 	for i := len(hops) - 1; i >= 0; i-- {
 		h := hops[i]
+		h.c.HostKeyAlias = h.c.HostKeyIdentity(h.name)
 		current := opts
 		if i > 0 {
 			current = a.connectionSSHOptions(cmd, h.name, h.c, interactive)
