@@ -85,6 +85,8 @@ user = "bob"
 
 pty-req 的 TERM 优先级为全局 `--term` > 连接 TOML 的 `term` > 本地 `$TERM` > `xterm-256color`；`term` 字段校验不含空白与控制字符。new 默认保存 `term = "xterm-256color"`，可用 `--term` 覆盖或 `--term ''` 使用本地 `$TERM`；edit 用 `--term` 设置、`--clear-term` 清除。该字段用于远端 terminfo 缺少本地终端类型的场景，否则远端行编辑会退化。
 
+交互 shell 优先级为全局 `--shell` > 连接 TOML 的 `shell` > 平台默认（Windows `cmd.exe`、macOS `zsh`、其他 `bash`）；`default` 表示发 shell 请求，使用服务器的登录 shell。值只能是名字或路径（字母、数字和 `. _ + - / \ :`），因为它会被拼进远端命令。Windows 按 SSH 版本号中的 `Windows` 识别，选中的 shell 名作为 exec 命令发出；其他平台发 `exec /bin/sh -c '…'`，由远端 `uname -s` 选择默认值、以 `-l` 启动，找不到时退回 `$SHELL -l`（显式指定的会先在 stderr 提示）。仍按原规则申请 PTY；带命令执行和 sudo 交互不受影响。new/edit `--shell` 设置，edit 传空字符串清除；list 增加 SHELL 列，`list --json` 和 inspect 输出 shell。
+
 ## SOCKS5 代理契约
 
 连接 TOML 的 proxies 字符串数组按跳序保存代理。new/edit 支持重复 --proxy，edit 替换整条链，--clear-proxy 恢复直连；未指定时保留已有配置。地址支持 HOST:PORT 或 socks5://HOST:PORT（IPv6 必须加方括号），同时支持 socks5h URL 和代理认证；代理凭据原样存储，错误不得回显凭据。
@@ -150,7 +152,7 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 
 `clone OLD NEW` 保留原连接，`rename OLD NEW` 删除原别名。新别名须合法且不存在；配置更新锁内完成凭据按新名重新加密，兼容旧 sudo 绑定。失败不提交配置。历史和转发不改名。
 
-`list --json` 输出按名称排序的安全字段数组（name/host/port/user/term/tags/note，tags 无值时为 []）。`history [search] --json` 输出记录数组，空数组为 []；`--status` 精确匹配合法状态，`--connection` 精确匹配源/目标连接名；`--after/--before` 为 RFC3339 开始时间范围，左闭右开；所有条件与关键词取交集，先筛选再应用 limit。
+`list --json` 输出按名称排序的安全字段数组（name/host/port/user/term/shell/tags/note，tags 无值时为 []）。`history [search] --json` 输出记录数组，空数组为 []；`--status` 精确匹配合法状态，`--connection` 精确匹配源/目标连接名；`--after/--before` 为 RFC3339 开始时间范围，左闭右开；所有条件与关键词取交集，先筛选再应用 limit。
 
 ## 复制预览与排除
 

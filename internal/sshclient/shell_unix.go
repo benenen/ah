@@ -119,7 +119,11 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 		return c.runSudoSession(setupCtx, finishSetup, session, command, interactive, stdin, stdout, stderr)
 	}
 	if interactive {
-		err = session.Shell()
+		if command := interactiveCommand(c.shell, isWindowsServer(c.client.ServerVersion())); command != "" {
+			err = session.Start(command)
+		} else {
+			err = session.Shell()
+		}
 	} else {
 		err = session.Start(command)
 	}

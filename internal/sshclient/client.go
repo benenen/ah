@@ -34,6 +34,8 @@ type Options struct {
 	KnownHosts   string
 	// Term overrides the connection's configured TERM for this call.
 	Term string
+	// Shell overrides the connection's configured interactive shell.
+	Shell string
 	// Timeout bounds dialing and the SSH handshake. An interactive host key
 	// decision pauses the handshake clock, so answering a prompt does not
 	// consume the budget.
@@ -58,6 +60,7 @@ type Client struct {
 	sftpServer   string
 	sudoShell    string
 	term         string
+	shell        string
 	sudoPassword func(context.Context) ([]byte, error)
 	client       *ssh.Client
 	conn         net.Conn
@@ -227,7 +230,11 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 	if terminal == "" {
 		terminal = c.Term
 	}
-	client := &Client{parent: opts.parent, done: make(chan struct{}), observe: opts.Observe, client: ssh.NewClient(sc, ch, reqs), conn: conn, stop: stop, ctx: ctx, timeout: opts.Timeout, sudo: c.Sudo, sftpServer: c.SFTPServer, sudoShell: c.SudoShell, term: terminal, sudoPassword: opts.SudoPassword}
+	shell := opts.Shell
+	if shell == "" {
+		shell = c.Shell
+	}
+	client := &Client{shell: shell, parent: opts.parent, done: make(chan struct{}), observe: opts.Observe, client: ssh.NewClient(sc, ch, reqs), conn: conn, stop: stop, ctx: ctx, timeout: opts.Timeout, sudo: c.Sudo, sftpServer: c.SFTPServer, sudoShell: c.SudoShell, term: terminal, sudoPassword: opts.SudoPassword}
 	if opts.KeepAlive > 0 {
 		go client.keepAlive(opts.KeepAlive)
 	}

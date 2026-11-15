@@ -29,13 +29,14 @@ func (a *app) listCommand() *cobra.Command {
 			}
 			if jsonOutput {
 				type row struct {
-					Name string   `json:"name"`
-					Host string   `json:"host"`
-					Port int      `json:"port"`
-					User string   `json:"user"`
-					Term string   `json:"term"`
-					Tags []string `json:"tags"`
-					Note string   `json:"note"`
+					Name  string   `json:"name"`
+					Host  string   `json:"host"`
+					Port  int      `json:"port"`
+					User  string   `json:"user"`
+					Term  string   `json:"term"`
+					Shell string   `json:"shell"`
+					Tags  []string `json:"tags"`
+					Note  string   `json:"note"`
 				}
 				rows := make([]row, 0, len(names))
 				for _, name := range names {
@@ -44,12 +45,12 @@ func (a *app) listCommand() *cobra.Command {
 					if tags == nil {
 						tags = []string{}
 					}
-					rows = append(rows, row{name, c.Host, c.Port, c.User, c.Term, tags, c.Note})
+					rows = append(rows, row{name, c.Host, c.Port, c.User, c.Term, c.Shell, tags, c.Note})
 				}
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
 			}
 			out := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			if _, err = fmt.Fprintln(out, "NAME\tHOST\tPORT\tUSER\tTERM\tTAGS\tNOTE"); err != nil {
+			if _, err = fmt.Fprintln(out, "NAME\tHOST\tPORT\tUSER\tTERM\tSHELL\tTAGS\tNOTE"); err != nil {
 				return err
 			}
 			dash := func(s string) string {
@@ -60,7 +61,7 @@ func (a *app) listCommand() *cobra.Command {
 			}
 			for _, name := range names {
 				c := entries[name]
-				if _, err = fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", name, c.Host, c.Port, c.User, dash(c.Term), dash(strings.Join(c.Tags, ",")), dash(c.Note)); err != nil {
+				if _, err = fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n", name, c.Host, c.Port, c.User, dash(c.Term), dash(c.Shell), dash(strings.Join(c.Tags, ",")), dash(c.Note)); err != nil {
 					return err
 				}
 			}
@@ -76,6 +77,7 @@ func connectionFlags(cmd *cobra.Command, c *config.Connection) {
 	cmd.Flags().BoolVar(&c.Sudo, "sudo", false, "run SSH commands and remote file operations as root")
 	cmd.Flags().StringVar(&c.SFTPServer, "sftp-server", "", "absolute remote SFTP server path for sudo (empty to detect common paths)")
 	cmd.Flags().StringVar(&c.SudoShell, "sudo-shell", "", "login shell for an escalated interactive session (default bash, falls back to /bin/sh)")
+	cmd.Flags().StringVar(&c.Shell, "shell", "", "interactive shell such as pwsh, zsh or bash (empty uses the platform default: cmd.exe on Windows, zsh on macOS, bash elsewhere; \"default\" uses the server's login shell)")
 	cmd.Flags().StringVar(&c.Term, "term", c.Term, "TERM to send for interactive sessions (empty to use $TERM)")
 	cmd.Flags().StringArrayVar(&c.Proxies, "proxy", nil, "SOCKS5 HOST:PORT or socks5://HOST:PORT; repeat in hop order")
 	cmd.Flags().StringVar(&c.ProxyCommand, "proxy-command", "", "local command carrying the SSH stream on stdin/stdout, like OpenSSH ProxyCommand; %h, %p, %r expand (empty clears it)")
@@ -197,6 +199,9 @@ func (a *app) editCommand() *cobra.Command {
 			}
 			if clearTerm {
 				c.Term = ""
+			}
+			if cmd.Flags().Changed("shell") {
+				c.Shell = changes.Shell
 			}
 			if sudoPassword {
 				c.SudoPassword = encryptedSudo

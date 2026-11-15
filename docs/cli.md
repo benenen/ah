@@ -86,6 +86,7 @@
 | `--history-file PATH` | `os.UserConfigDir()/ah/history.db` |
 | `--known-hosts PATH` | `~/.ssh/known_hosts` |
 | `--term TERM` | 覆盖本次交互会话发送的 TERM，优先于连接配置 |
+| `--shell SHELL` | 覆盖本次交互会话启动的 shell，优先于连接配置；`default` 使用服务器的登录 shell |
 | `--keepalive DURATION` | 默认 0 关闭；定期发送 SSH 保活请求，回复等待受 --timeout 限制 |
 | `--timeout DURATION` | `10s`；正数，约束 SSH/代理链握手及 sudo 初始化，不限制整个文件传输时长 |
 | `--trust-new-host` | 不提示直接接受并保存首次见到的主机密钥；已知密钥变化仍报错 |
@@ -130,6 +131,7 @@ ah rm build
 | `--password` | 隐藏输入 SSH 密码并加密保存 |
 | `--jump ALIAS` | 经命名 SSH 跳板连接；空字符串清除，与当前连接的代理链互斥 |
 | `--term TERM` | 保存交互终端类型；new 默认 xterm-256color，空字符串使用本地 TERM |
+| `--shell SHELL` | 保存交互 shell，如 `pwsh`、`zsh`；空字符串按平台默认，`default` 使用服务器的登录 shell |
 | `--sudo-shell SHELL` | sudo 交互登录 shell，默认 bash，不可用时回退 /bin/sh |
 | `--proxy ADDRESS` | 保存 SOCKS5 代理；重复传入表示依次多跳 |
 | `--proxy-command CMD` | 像 OpenSSH ProxyCommand 一样经本地命令的 stdin/stdout 连接；空字符串清除 |
@@ -173,7 +175,7 @@ ah --config ./connections.toml inspect nas
 ```
 
 输出缩进 JSON，包含 name、config_file、host、port、user、identity_file、proxies、sudo、sudo_shell、sftp_server、term，以及 tags、note、password_configured、sudo_password_configured。
-`term` 为保存值，`effective_term` 按全局 `--term`、连接 term、本地 `$TERM`、`xterm-256color` 的顺序计算。
+`term` 为保存值，`effective_term` 按全局 `--term`、连接 term、本地 `$TERM`、`xterm-256color` 的顺序计算。`shell` 为全局 `--shell` 或连接保存值，空表示按平台默认。
 未设置的字符串保留为空，代理链为空时输出 `[]`；旧版单代理配置也统一展示为 proxies 数组。
 每跳包含 address 和 authentication_configured，address 隐藏代理用户名及密码。命令不连接远端或解密凭据；密码密文、明文及私钥内容均不输出。
 名称不存在、配置损坏或参数数量错误时返回非零退出码。连接名支持 Tab 补全。
@@ -233,6 +235,16 @@ ah c nas "cat '/home/alice/a file.txt'"
 ### 终端兼容
 
 交互会话按 OpenSSH 的做法申请 PTY：把本地终端设置（erase 等控制字符、IUTF8 等标志、波特率）随请求发给远端。新增连接默认保存 `term = "xterm-256color"`，可用 `new NAME --term screen-256color` 覆盖，或 `--term ''` 使用本地 `$TERM`。如果远端 terminfo 数据库里没有本地终端类型（例如 Ghostty 的 `xterm-ghostty` 遇上较旧的发行版），readline 会退化成哑终端行为，最典型的症状是退格只让光标移动、字符不消失。已有连接可用 `edit NAME --term xterm-256color` 固定一个远端认识的名字，或临时用全局选项 `ah --term xterm-256color c NAME` 覆盖；优先级为 `--term` > 连接配置 `term` > 本地 `$TERM`。另一种做法是把本地 terminfo 装到远端：`infocmp -x $TERM | ah c NAME 'tic -x -'`。
+
+交互会话启动的 shell 按 `--shell` > 连接配置 `shell` > 平台默认的顺序决定。平台默认为：Windows 用 `cmd.exe`，macOS 用 `zsh`，其他系统用 `bash`。
+
+```sh
+ah edit winbox --shell pwsh        # 这台 Windows 默认进 PowerShell 7
+ah --shell powershell c winbox     # 临时改用 Windows PowerShell
+ah edit nas --shell default        # 交给服务器决定，等同于旧行为
+```
+
+Windows 主机按 SSH 版本号里的 `OpenSSH_for_Windows` 识别，选中的 shell 交给服务器的 DefaultShell 去启动；其他主机在远端用 `uname -s` 区分 macOS 和其他系统，再以 `-l` 登录方式启动。指定的 shell 在远端不存在时，会提示一行并退回用户自己的登录 shell，不会直接断开。除 `default` 外，ah 都通过 exec 请求启动 shell，所以 sshd 不再打印 motd 和 “Last login”，需要的话设 `--shell default`。带命令执行（`ah c NAME CMD`、`ah exec`）和 sudo 连接不受这个设置影响。`shell` 只接受名字或路径（字母、数字和 `. _ + - / \ :`），不能带参数。
 
 ## 按标签批量执行
 

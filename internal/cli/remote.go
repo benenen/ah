@@ -13,7 +13,7 @@ import (
 )
 
 func (a *app) sshOptions(cmd *cobra.Command) sshclient.Options {
-	opts := sshclient.Options{KeepAlive: a.keepAlive, KnownHosts: a.knownHosts, Timeout: a.timeout, Term: a.term}
+	opts := sshclient.Options{KeepAlive: a.keepAlive, KnownHosts: a.knownHosts, Timeout: a.timeout, Term: a.term, Shell: a.shell}
 	input, ok := cmd.InOrStdin().(*os.File)
 	terminal := ok && term.IsTerminal(int(input.Fd()))
 	if terminal {

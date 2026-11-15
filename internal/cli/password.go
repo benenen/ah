@@ -113,6 +113,7 @@ func (a *app) connectionSSHOptions(cmd *cobra.Command, name string, c config.Con
 		opts = a.sshOptions(cmd)
 	}
 	opts.Term = a.term
+	opts.Shell = a.shell
 	if c.Password != "" {
 		opts.PasswordOnly = true
 		opts.Passphrase = nil

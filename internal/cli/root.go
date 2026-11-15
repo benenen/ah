@@ -18,6 +18,7 @@ type app struct {
 	keyPath          string
 	knownHosts       string
 	term             string
+	shell            string
 	timeout          time.Duration
 	keepAlive        time.Duration
 	forwardContinue  bool
@@ -32,6 +33,7 @@ func New() *cobra.Command {
 	root.PersistentFlags().StringVar(&a.keyPath, "key-file", "", "password encryption key file (default: user config directory/ah/master.key)")
 	root.PersistentFlags().StringVar(&a.knownHosts, "known-hosts", "", "SSH known_hosts file (default: ~/.ssh/known_hosts)")
 	root.PersistentFlags().StringVar(&a.term, "term", "", "TERM for interactive sessions, overriding the connection's saved value and $TERM")
+	root.PersistentFlags().StringVar(&a.shell, "shell", "", "interactive shell, overriding the connection's saved value (default: cmd.exe on Windows, zsh on macOS, bash elsewhere; \"default\" uses the server's login shell)")
 	root.PersistentFlags().DurationVar(&a.keepAlive, "keepalive", 0, "SSH keepalive interval (0 disables; replies bounded by --timeout)")
 	root.PersistentFlags().DurationVar(&a.timeout, "timeout", 10*time.Second, "SSH connection and handshake timeout")
 	root.PersistentFlags().BoolVar(&a.trustNewHost, "trust-new-host", false, "trust and save unknown host keys without prompting (changed keys still fail)")
@@ -41,6 +43,9 @@ func New() *cobra.Command {
 		}
 		if a.timeout <= 0 {
 			return fmt.Errorf("--timeout must be positive")
+		}
+		if err := config.ValidateShell(a.shell); err != nil {
+			return fmt.Errorf("--shell: %w", err)
 		}
 		return nil
 	}

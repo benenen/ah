@@ -52,7 +52,7 @@ ah c nas "cat '/home/alice/a file.txt'"
 ah c nas 'cd /home/alice && ls -lah | head -20'
 ```
 
-`ah ls` / `ah list` 显示 NAME、HOST、PORT、USER、TERM、TAGS、NOTE。用户按环境或项目指代主机（“生产的机器”“订单项目”）时，先 `ah ls --tag prod` 或 `ah ls 关键词` 缩小范围（关键词匹配名称、主机、用户、备注和标签，忽略大小写），脚本解析用 `ah ls --json`。TERM 是连接保存的配置值；`-` 表示未配置，连接时沿用本地 `$TERM`（显式全局 `--term` 仍可覆盖），不是远端探测结果。
+`ah ls` / `ah list` 显示 NAME、HOST、PORT、USER、TERM、SHELL、TAGS、NOTE。用户按环境或项目指代主机（“生产的机器”“订单项目”）时，先 `ah ls --tag prod` 或 `ah ls 关键词` 缩小范围（关键词匹配名称、主机、用户、备注和标签，忽略大小写），脚本解析用 `ah ls --json`。TERM 是连接保存的配置值；`-` 表示未配置，连接时沿用本地 `$TERM`（显式全局 `--term` 仍可覆盖），不是远端探测结果。
 
 `ah inspect NAME` 输出单个连接的缩进 JSON（无 `--json` 标志，本来就是 JSON），包含 host/port/user/identity_file/proxies/sudo/term 等字段；密码、sudo 密码只报告是否已配置，代理认证信息隐藏。脚本要读连接详情时用它，不要解析 `ls` 的表格。
 
@@ -62,7 +62,7 @@ ah c nas 'cd /home/alice && ls -lah | head -20'
 
 自动执行任务时优先使用带命令的 `c`，避免停留在登录 shell。将 ah 自身选项放在连接名之前；之后所有参数（包括 `--help`）属于远端。
 
-远程命令按 SSH 方式空格拼接后交给远端 shell，不保留本地 argv 边界。对含空格的路径保留远端引号，并给整个命令做本地引用；引用完整命令可使管道/重定向在远端执行。使用工具的结构化参数或可靠的 shell 引用，不将不可信文本直接拼入远程命令。无命令时才申请交互 PTY；目前没有 `-t`/`-tt`。交互 PTY 会连同本地终端设置和 `TERM` 一起发给远端；远端 terminfo 缺少该终端类型时（例如 Ghostty 的 `xterm-ghostty` 遇上旧发行版），远端行编辑退化，退格只移动光标而不删除字符。用 `edit NAME --term xterm-256color` 为该连接固定名字，或临时用 `ah --term xterm-256color c NAME`；`--clear-term` 恢复使用本地 `$TERM`。
+远程命令按 SSH 方式空格拼接后交给远端 shell，不保留本地 argv 边界。对含空格的路径保留远端引号，并给整个命令做本地引用；引用完整命令可使管道/重定向在远端执行。使用工具的结构化参数或可靠的 shell 引用，不将不可信文本直接拼入远程命令。无命令时才申请交互 PTY；目前没有 `-t`/`-tt`。交互 PTY 会连同本地终端设置和 `TERM` 一起发给远端；远端 terminfo 缺少该终端类型时（例如 Ghostty 的 `xterm-ghostty` 遇上旧发行版），远端行编辑退化，退格只移动光标而不删除字符。用 `edit NAME --term xterm-256color` 为该连接固定名字，或临时用 `ah --term xterm-256color c NAME`；`--clear-term` 恢复使用本地 `$TERM`。交互 shell 按 `--shell` > 连接 `shell` > 平台默认（Windows `cmd.exe`、macOS `zsh`、其他 `bash`）选择：Windows 主机要进 PowerShell 用 `edit NAME --shell pwsh` 或临时 `ah --shell pwsh c NAME`；`--shell default` 交给服务器的登录 shell。它只影响无命令的交互登录，不影响 `c NAME CMD`、`exec` 和 sudo 连接。
 
 `pick [QUERY...] [--tag TAG]` 是给人用的全屏选择器（stdin 和 stderr 都要是终端，仅 macOS/Linux），Enter 后进入与 `c NAME` 相同的会话。agent 已知连接名时直接用 `c`。
 

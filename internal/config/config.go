@@ -37,7 +37,10 @@ type Connection struct {
 	SudoShell string `toml:"sudo_shell,omitempty"`
 	// Term overrides the TERM sent with pty-req, for servers whose terminfo
 	// database lacks the local terminal; empty means the local $TERM.
-	Term         string   `toml:"term,omitempty"`
+	Term string `toml:"term,omitempty"`
+	// Shell is the interactive login shell to start; empty picks the remote
+	// platform default and DefaultShell keeps the server's own choice.
+	Shell        string   `toml:"shell,omitempty"`
 	Host         string   `toml:"host"`
 	Port         int      `toml:"port"`
 	User         string   `toml:"user"`
@@ -157,6 +160,9 @@ func (c Connection) Validate() error {
 	if utf8.RuneCountInString(c.Note) > MaxNoteLength || strings.ContainsFunc(c.Note, unicode.IsControl) {
 		return fmt.Errorf("note must be a single line of at most %d characters without control characters", MaxNoteLength)
 	}
+	if err := ValidateShell(c.Shell); err != nil {
+		return err
+	}
 	if c.Term != "" && strings.ContainsFunc(c.Term, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
 		return fmt.Errorf("term must be a terminfo name without whitespace or control characters")
 	}
@@ -206,6 +212,21 @@ func validateProxyCommandTokens(command string) error {
 			return fmt.Errorf("proxy_command supports only %%h, %%p, %%r and %%%% tokens")
 		}
 		i++
+	}
+	return nil
+}
+
+var shellPattern = regexp.MustCompile(`^[A-Za-z0-9._+/\\:-]*$`)
+
+// DefaultShell as a shell value starts the server's configured login shell.
+const DefaultShell = "default"
+
+// ValidateShell accepts an empty value, DefaultShell or a shell name or path.
+func ValidateShell(shell string) error {
+	// The name is placed in a remote command line, so allow only characters
+	// that no shell treats specially.
+	if !shellPattern.MatchString(shell) {
+		return fmt.Errorf("shell must be a shell name or path using only letters, digits and . _ + - / \\ :")
 	}
 	return nil
 }

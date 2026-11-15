@@ -169,7 +169,7 @@ func TestShellPTYRestoresTerminal(t *testing.T) {
 			case "pty-req":
 				ptyRequested = true
 				_ = req.Reply(true, nil)
-			case "shell":
+			case "shell", "exec":
 				if !ptyRequested {
 					serverResult <- fmt.Errorf("shell started without PTY")
 					return
@@ -281,7 +281,7 @@ func requestedTerm(t *testing.T, connectionTerm, optionTerm string) string {
 					}
 				}
 				_ = req.Reply(true, nil)
-			case "shell":
+			case "shell", "exec":
 				_ = req.Reply(true, nil)
 				_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 				return
