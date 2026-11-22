@@ -94,3 +94,19 @@ func TestPlanReadOnly(t *testing.T) {
 		})
 	}
 }
+
+func TestPlanRejectsSymlinkAndRelativeSelfCopy(t *testing.T) {
+	dir := t.TempDir()
+	realSrc := filepath.Join(dir, "real")
+	if err := os.MkdirAll(filepath.Join(realSrc, "sub"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	linkSrc := filepath.Join(dir, "link")
+	if err := os.Symlink(realSrc, linkSrc); err != nil {
+		t.Fatal(err)
+	}
+	err := Plan(context.Background(), nil, nil, realSrc, filepath.Join(linkSrc, "sub", "into"), true, TreeOptions{SameFilesystem: true}, func(PlanEntry) error { return nil })
+	if err == nil {
+		t.Fatal("Plan accepted symlink self-copy")
+	}
+}

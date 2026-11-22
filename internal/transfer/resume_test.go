@@ -123,6 +123,9 @@ func TestResumeRejectsCorruptPartialAndChangedSource(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatal("corrupt partial accepted", err)
 	}
+	if afterMismatch, err := filepath.Glob(filepath.Join(dir, ".ah-resume-*")); err != nil || len(afterMismatch) != 1 {
+		t.Fatalf("mismatch left extra empty partial: %v %v", afterMismatch, err)
+	}
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
 		t.Fatal("corrupt partial published", err)
 	}
@@ -169,5 +172,8 @@ func TestResumeDetectsMutationDuringTransfer(t *testing.T) {
 	}
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
 		t.Fatal("mutated data published", err)
+	}
+	if left, err := filepath.Glob(filepath.Join(dir, ".ah-resume-*")); err != nil || len(left) != 0 {
+		t.Fatalf("mutated transfer retained corrupt partial: %v %v", left, err)
 	}
 }

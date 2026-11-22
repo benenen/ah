@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/pkg/sftp"
 )
@@ -51,12 +50,28 @@ func Plan(ctx context.Context, src, dst *sftp.Client, source, target string, rec
 		return fmt.Errorf("source must be a regular file or directory")
 	}
 	if ti, e := tf.Stat(target); e == nil && ti.IsDir() {
-		target = tf.join(target, sf.base(source))
+		base := sf.base(source)
+		if base == "." || base == ".." || base == sf.separator() {
+			if canonSource, canonErr := canonicalExistingPath(sf, source); canonErr == nil {
+				base = sf.base(canonSource)
+			}
+		}
+		target = tf.join(target, base)
 	} else if e != nil && !os.IsNotExist(e) {
 		return e
 	}
-	if info.IsDir() && opts.SameFilesystem && (target == source || strings.HasPrefix(target, strings.TrimSuffix(source, tf.separator())+tf.separator())) {
-		return fmt.Errorf("cannot copy directory into itself")
+	if info.IsDir() && opts.SameFilesystem {
+		canonSource, err := canonicalExistingPath(sf, source)
+		if err != nil {
+			return fmt.Errorf("resolve source: %w", err)
+		}
+		canonTarget, err := canonicalTargetPath(tf, target)
+		if err != nil {
+			return fmt.Errorf("resolve destination: %w", err)
+		}
+		if withinDirectory(tf, canonSource, canonTarget) {
+			return fmt.Errorf("cannot copy directory into itself")
+		}
 	}
 	if err = tf.requirePublish(opts.Options); err != nil {
 		return err
@@ -104,6 +119,9 @@ func Plan(ctx context.Context, src, dst *sftp.Client, source, target string, rec
 			}
 			sort.Slice(children, func(i, j int) bool { return children[i].Name() < children[j].Name() })
 			for _, child := range children {
+				if err := validateEntryName(child.Name(), tf); err != nil {
+					return err
+				}
 				childRel := child.Name()
 				if rel != "" {
 					childRel = rel + "/" + childRel

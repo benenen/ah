@@ -297,8 +297,8 @@ func scanDirectory(ctx context.Context, f filesystem, root string, patterns []st
 			return err
 		}
 		for _, child := range children {
-			if child.Name() == "." || child.Name() == ".." || (strings.Contains(child.Name(), "/") || (f.client == nil && strings.ContainsRune(child.Name(), filepath.Separator))) {
-				return fmt.Errorf("invalid directory entry %q", child.Name())
+			if err := validateEntryName(child.Name(), f); err != nil {
+				return err
 			}
 			if err := walk(path.Join(rel, child.Name())); err != nil {
 				return err

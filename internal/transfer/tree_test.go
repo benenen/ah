@@ -408,3 +408,48 @@ func TestListAndRestoreBackups(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateEntryNameAndSelfCopyCanonicalization(t *testing.T) {
+	for _, bad := range []string{"", ".", "..", "a/b", "../x"} {
+		if err := validateEntryName(bad, filesystem{}); err == nil {
+			t.Fatalf("accepted invalid entry name %q", bad)
+		}
+	}
+	if err := validateEntryName("normal.txt", filesystem{}); err != nil {
+		t.Fatalf("rejected valid name: %v", err)
+	}
+
+	dir := t.TempDir()
+	realSrc := filepath.Join(dir, "real")
+	sub := filepath.Join(realSrc, "sub")
+	if err := os.MkdirAll(sub, 0700); err != nil {
+		t.Fatal(err)
+	}
+	linkSrc := filepath.Join(dir, "link")
+	if err := os.Symlink(realSrc, linkSrc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CopyTree(context.Background(), nil, nil, realSrc, filepath.Join(linkSrc, "sub", "into"), TreeOptions{SameFilesystem: true}); err == nil {
+		t.Fatal("symlink self-copy succeeded")
+	}
+
+	// Remote relative path vs absolute path on the same SFTP filesystem.
+	sc, tc := localSFTP(t), localSFTP(t)
+	wd, err := sc.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relRoot, err := os.MkdirTemp(wd, "ah-self-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(relRoot) })
+	relSub := filepath.Join(relRoot, "sub")
+	if err := os.Mkdir(relSub, 0700); err != nil {
+		t.Fatal(err)
+	}
+	relName := filepath.Base(relRoot)
+	if _, err := CopyTree(context.Background(), sc, tc, relName, relSub, TreeOptions{SameFilesystem: true}); err == nil {
+		t.Fatal("remote relative self-copy succeeded")
+	}
+}

@@ -25,13 +25,17 @@ func resumeFile(ctx context.Context, tf filesystem, source, target string, in tr
 	if err != nil {
 		return 0, err
 	}
-	closed, published := false, false
+	closed, published, retainPartial := false, false, false
 	defer func() {
 		if !closed {
 			err = errors.Join(err, out.Close())
 		}
 		if !published && err != nil {
-			err = fmt.Errorf("resume partial retained at %s: %w", tmp, err)
+			if retainPartial {
+				err = fmt.Errorf("resume partial retained at %s: %w", tmp, err)
+			} else if removeErr := tf.Remove(tmp); removeErr != nil && !os.IsNotExist(removeErr) {
+				err = errors.Join(err, removeErr)
+			}
 		}
 	}()
 	if err = out.Chmod(0600); err != nil {
@@ -88,15 +92,18 @@ func resumeFile(ctx context.Context, tf filesystem, source, target string, in tr
 	remaining, err = io.CopyBuffer(contextWriter{ctx, out}, &resumeReader{reader: reader, base: n, total: info.Size(), progress: progress}, make([]byte, 128*1024))
 	n += remaining
 	if err != nil {
+		retainPartial = n > 0
 		return n, err
 	}
 	after, err := in.Stat()
 	if err != nil {
+		retainPartial = n > 0
 		return n, err
 	}
 	if n != info.Size() || !bytes.Equal(hash.Sum(nil), digest) || after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) {
 		return n, fmt.Errorf("source changed during resumable copy")
 	}
+	retainPartial = n > 0
 	err = in.Close()
 	*inputClosed = true
 	if err != nil {

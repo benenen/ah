@@ -105,12 +105,28 @@ func CopyTree(ctx context.Context, src, dst *sftp.Client, source, target string,
 	}
 
 	if targetInfo, statErr := targetFS.Stat(target); statErr == nil && targetInfo.IsDir() {
-		target = targetFS.join(target, sourceFS.base(source))
+		base := sourceFS.base(source)
+		if base == "." || base == ".." || base == sourceFS.separator() {
+			if canonSource, canonErr := canonicalExistingPath(sourceFS, source); canonErr == nil {
+				base = sourceFS.base(canonSource)
+			}
+		}
+		target = targetFS.join(target, base)
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return result, fmt.Errorf("stat destination: %w", statErr)
 	}
-	if opts.SameFilesystem && (target == source || strings.HasPrefix(target, strings.TrimSuffix(source, targetFS.separator())+targetFS.separator())) {
-		return result, fmt.Errorf("cannot copy directory %s into itself (%s)", source, target)
+	if opts.SameFilesystem {
+		canonSource, err := canonicalExistingPath(sourceFS, source)
+		if err != nil {
+			return result, fmt.Errorf("resolve source: %w", err)
+		}
+		canonTarget, err := canonicalTargetPath(targetFS, target)
+		if err != nil {
+			return result, fmt.Errorf("resolve destination: %w", err)
+		}
+		if withinDirectory(targetFS, canonSource, canonTarget) {
+			return result, fmt.Errorf("cannot copy directory %s into itself (%s)", source, target)
+		}
 	}
 	if existing, statErr := targetFS.Lstat(target); statErr == nil {
 		if !opts.replace() {
@@ -141,6 +157,9 @@ func CopyTree(ctx context.Context, src, dst *sftp.Client, source, target string,
 		}
 		sort.Slice(children, func(i, j int) bool { return children[i].Name() < children[j].Name() })
 		for _, child := range children {
+			if err := validateEntryName(child.Name(), targetFS); err != nil {
+				return err
+			}
 			childRel := path.Join(rel, child.Name())
 			if excluded(childRel, child.IsDir(), opts.Exclude) {
 				if opts.Excluded != nil {
@@ -261,4 +280,49 @@ func (f filesystem) below(root, rel string) string {
 		return filepath.Join(root, filepath.FromSlash(rel))
 	}
 	return path.Join(root, rel)
+}
+
+func validateEntryName(name string, target filesystem) error {
+	if name == "" || name == "." || name == ".." || strings.Contains(name, "/") {
+		return fmt.Errorf("invalid directory entry %q", name)
+	}
+	if target.client == nil && strings.ContainsRune(name, filepath.Separator) {
+		return fmt.Errorf("invalid directory entry %q", name)
+	}
+	return nil
+}
+
+func canonicalExistingPath(f filesystem, p string) (string, error) {
+	if f.client == nil {
+		return filepath.EvalSymlinks(p)
+	}
+	return f.client.RealPath(p)
+}
+
+func canonicalTargetPath(f filesystem, p string) (string, error) {
+	existing := f.clean(p)
+	var suffix []string
+	for {
+		_, err := f.Stat(existing)
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := f.dir(existing)
+		if parent == existing {
+			return "", err
+		}
+		suffix = append(suffix, f.base(existing))
+		existing = parent
+	}
+	resolved, err := canonicalExistingPath(f, existing)
+	if err != nil {
+		return "", err
+	}
+	for i := len(suffix) - 1; i >= 0; i-- {
+		resolved = f.join(resolved, suffix[i])
+	}
+	return resolved, nil
 }
