@@ -141,8 +141,7 @@ func (a *app) forwardCommand() *cobra.Command {
 			return a.runForward(cmd, record, ready, unlock)
 		},
 	}
-	cmd.PersistentFlags().BoolVar(&a.forwardReconnect, "reconnect", false, "reconnect after a running forward fails, with exponential backoff")
-	cmd.PersistentFlags().BoolVar(&a.forwardContinue, "continue-on-error", false, "keep listening after an individual target or relay failure")
+	a.bindForwardRunFlags(cmd)
 	cmd.Flags().BoolVarP(&daemon, "daemon", "d", false, "run in the background and print the generated ID")
 	cmd.Flags().BoolVarP(&dynamic, "dynamic", "D", false, "run a local SOCKS5 proxy whose connections the SSH server makes")
 	cmd.Flags().BoolVarP(&remote, "remote", "R", false, "listen on the SSH server and forward connections to a local target")
@@ -173,7 +172,7 @@ func (a *app) forwardCommand() *cobra.Command {
 				if r.Kind() == forward.Dynamic {
 					target = "(socks5)"
 				}
-				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", r.ID, kind, r.Name, r.Listen, target, r.PID, r.Status, r.Error); err != nil {
+				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", r.ID, kind, r.Name, r.Listen, target, r.PID, r.Status, sanitizeSingleLine(r.Error)); err != nil {
 					return err
 				}
 			}
@@ -219,6 +218,15 @@ func (a *app) forwardCommand() *cobra.Command {
 	})
 	cmd.AddCommand(a.forwardRemoveCommand(), a.forwardStartCommand(false), a.forwardStartCommand(true))
 	return cmd
+}
+
+func (a *app) bindForwardRunFlags(target *cobra.Command) {
+	target.Flags().BoolVar(&a.forwardReconnect, "reconnect", false, "reconnect after a running forward fails, with exponential backoff")
+	target.Flags().BoolVar(&a.forwardContinue, "continue-on-error", false, "keep listening after an individual target or relay failure")
+}
+
+func sanitizeSingleLine(s string) string {
+	return strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(s))
 }
 
 func (a *app) runForward(cmd *cobra.Command, record forward.Record, ready *os.File, unlock func() error) (err error) {

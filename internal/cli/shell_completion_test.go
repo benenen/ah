@@ -62,9 +62,10 @@ func TestShellTabCompletion(t *testing.T) {
 					sourceName := "source 中文$(touch INJECTED) 'quote' \\ [x];!.txt"
 					destinationName := "destination 中文$(touch DEST_INJECTED) 'quote' [x];!"
 					sourceRoot, targetRoot := a.Root, b.Root
-					if mode == "local-local" {
+					switch mode {
+					case "local-local":
 						sourceRoot, targetRoot = home, home
-					} else if mode == "local-remote" {
+					case "local-remote":
 						sourceRoot = home
 					}
 					payload := []byte("Tab completed both independent paths\n")

@@ -317,3 +317,28 @@ func TestForwardRestartCancelsStartingBeforeLock(t *testing.T) {
 		t.Fatalf("expected fast dial error instead of lock deadlock, got: %v", err)
 	}
 }
+
+func TestForwardFlagsScopedAndErrorSanitized(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	if _, err := execute(t, "forward", "ls", "--reconnect"); err == nil {
+		t.Fatal("forward ls accepted --reconnect")
+	}
+	r, err := forward.Allocate(forward.Local, "demo", "127.0.0.1:8080", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Status = "failed"
+	r.Error = "first line\nsecond\tline"
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := execute(t, "forward", "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "second\tline") || !strings.Contains(out, "first line second line") {
+		t.Fatalf("multiline error was not sanitized:\n%s", out)
+	}
+}

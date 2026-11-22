@@ -147,7 +147,7 @@ func (a *app) forwardStartCommand(restart bool) *cobra.Command {
 	if restart {
 		name, description = "restart", "Restart a forward in the background using the same ID"
 	}
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use: name + " ID", Short: description, Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout+5*time.Second)
@@ -245,4 +245,6 @@ func (a *app) forwardStartCommand(restart bool) *cobra.Command {
 			return err
 		},
 	}
+	a.bindForwardRunFlags(cmd)
+	return cmd
 }

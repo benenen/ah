@@ -100,6 +100,9 @@ func TestBackupListAndRestore(t *testing.T) {
 			if _, err := run("backup", "restore", "--backup-keep", "0", target.endpoint); err == nil {
 				t.Fatal("accepted --backup-keep 0")
 			}
+			if _, err := run("cp", source, target.endpoint, "--backup-keep", "3"); err == nil || !strings.Contains(err.Error(), "--backup-keep requires --backup") {
+				t.Fatalf("accepted --backup-keep without --backup: %v", err)
+			}
 		})
 	}
 }

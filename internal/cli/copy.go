@@ -36,6 +36,9 @@ func (a *app) copyCommand() *cobra.Command {
 			return fmt.Errorf("--exclude requires --recursive")
 		}
 		if !backup {
+			if cmd.Flags().Changed("backup-keep") {
+				return fmt.Errorf("--backup-keep requires --backup")
+			}
 			mode.BackupKeep = 0
 		} else if mode.BackupKeep < 1 || mode.BackupKeep > 1000 {
 			return fmt.Errorf("--backup-keep must be between 1 and 1000")
