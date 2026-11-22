@@ -210,3 +210,61 @@ func TestRemoveCorrupt(t *testing.T) {
 		t.Fatal("accepted path traversal")
 	}
 }
+
+func TestListContextCancelAndStartingStaleAndStopRace(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	// 1. A starting record with a dead control socket is reported as stale.
+	deadStarting, err := Allocate(Local, "dead-start", "127.0.0.1:8080", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadStarting.Socket = filepath.Join(dir, "missing.sock")
+	if err := deadStarting.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. A live forward is not misclassified as stale when List's ctx is canceled.
+	live, err := Allocate(Local, "live", "127.0.0.1:8081", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := Register(live, func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := List(canceled); err == nil {
+		t.Fatal("List with canceled context succeeded")
+	}
+
+	records, err := List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]Record{}
+	for _, r := range records {
+		byID[r.ID] = r
+	}
+	if byID[deadStarting.ID].Status != "stale" {
+		t.Fatalf("dead starting status = %q, want stale", byID[deadStarting.ID].Status)
+	}
+	if byID[live.ID].Status != "running" {
+		t.Fatalf("live status = %q, want running", byID[live.ID].Status)
+	}
+
+	// 3. Concurrent Close and Stop does not spuriously fail when Close finishes saving.
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- reg.Close(nil)
+	}()
+	if err := Stop(context.Background(), live.ID); err != nil {
+		t.Fatalf("Stop during concurrent Close failed: %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatal(err)
+	}
+}

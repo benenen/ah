@@ -325,8 +325,13 @@ func List(ctx context.Context) ([]Record, error) {
 			records = append(records, Record{ID: id, Status: "corrupt", Error: err.Error()})
 			continue
 		}
-		if r.Status == "running" && control(ctx, r, "ping") != nil {
-			r.Status = "stale"
+		if r.Status == "running" || (r.Status == "starting" && r.Socket != "") {
+			if err := control(ctx, r, "ping"); err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				r.Status = "stale"
+			}
 		}
 		records = append(records, r)
 	}
@@ -352,6 +357,19 @@ func Stop(ctx context.Context, id string) error {
 		}
 	}
 	if err = control(ctx, r, "stop"); err != nil {
+		// The worker may have exited and removed its socket right before
+		// persisting the final status; give it a brief window to finish saving.
+		for range 10 {
+			latest, readErr := Read(id)
+			if readErr == nil && latest.Status != "running" && latest.Status != "starting" {
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("stop forward %s: %w", id, err)
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
 		return fmt.Errorf("stop forward %s: %w", id, err)
 	}
 	ticker := time.NewTicker(20 * time.Millisecond)
