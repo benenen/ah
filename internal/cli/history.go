@@ -82,13 +82,18 @@ func (a *app) historyCommand() *cobra.Command {
 		return out.Flush()
 	}
 	cmd := &cobra.Command{Use: "history [QUERY...]", Aliases: []string{"h"}, Short: "Search copy history by keywords", RunE: search}
-	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "print records as JSON")
-	cmd.PersistentFlags().StringVar(&status, "status", "", "exact status: running, success, failed, canceled")
-	cmd.PersistentFlags().StringVar(&connection, "connection", "", "exact source or destination connection alias")
-	cmd.PersistentFlags().StringVar(&after, "after", "", "inclusive start time (RFC3339)")
-	cmd.PersistentFlags().StringVar(&before, "before", "", "exclusive start time (RFC3339)")
-	cmd.PersistentFlags().IntVar(&limit, "limit", 20, "maximum history records (1-1000)")
-	cmd.AddCommand(&cobra.Command{Use: "search [QUERY...]", Short: "Search source, destination, status and errors", RunE: search})
+	bindSearchFlags := func(target *cobra.Command) {
+		target.Flags().BoolVar(&jsonOutput, "json", false, "print records as JSON")
+		target.Flags().StringVar(&status, "status", "", "exact status: running, success, failed, canceled")
+		target.Flags().StringVar(&connection, "connection", "", "exact source or destination connection alias")
+		target.Flags().StringVar(&after, "after", "", "inclusive start time (RFC3339)")
+		target.Flags().StringVar(&before, "before", "", "exclusive start time (RFC3339)")
+		target.Flags().IntVar(&limit, "limit", 20, "maximum history records (1-1000)")
+	}
+	bindSearchFlags(cmd)
+	searchCmd := &cobra.Command{Use: "search [QUERY...]", Short: "Search source, destination, status and errors", RunE: search}
+	bindSearchFlags(searchCmd)
+	cmd.AddCommand(searchCmd)
 	cmd.AddCommand(&cobra.Command{Use: "show ID", Short: "Print a safely quoted command for a history entry", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		record, err := a.historyRecord(cmd, args[0])
 		if err != nil {
@@ -147,6 +152,9 @@ func (a *app) historyCommand() *cobra.Command {
 		}
 		if cmd.Flags().Changed("force") {
 			record.Force = force
+			if !force {
+				record.BackupKeep = 0
+			}
 		}
 		// Structured invocation, never shell evaluation of data from SQLite.
 		return replay.copyWithHistory(cmd, record.Source, record.Destination, copyMode{Sync: record.Sync, Delete: record.Delete, Resume: record.Resume, Force: record.Force, Recursive: record.Recursive, BackupKeep: record.BackupKeep, Exclude: record.Exclude}, record.Cwd)

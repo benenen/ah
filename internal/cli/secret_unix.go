@@ -34,10 +34,10 @@ func pollByte(ctx context.Context, fd int) (byte, error) {
 		if err != nil {
 			return 0, err
 		}
-		if fds[0].Revents&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
-			return 0, io.EOF
-		}
 		if fds[0].Revents&unix.POLLIN == 0 {
+			if fds[0].Revents&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
+				return 0, io.EOF
+			}
 			continue
 		}
 		n, err := unix.Read(fd, b[:])

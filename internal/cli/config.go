@@ -166,25 +166,39 @@ func planConfigImport(current, incoming map[string]config.Connection, force bool
 		}
 		merged[name] = incoming[name]
 	}
-	for _, name := range sortedNames(merged) {
-		seen := map[string]bool{}
-		next := name
-		for next != "" {
-			if seen[next] {
-				return nil, fmt.Errorf("SSH jump cycle at %q", next)
-			}
-			if len(seen) >= 32 {
-				return nil, fmt.Errorf("SSH jump chain exceeds 32 connections")
-			}
-			seen[next] = true
-			c, ok := merged[next]
-			if !ok {
-				return nil, fmt.Errorf("jump connection %q does not exist", next)
-			}
-			next = c.Jump
-		}
+	if err := validateJumpChains(merged); err != nil {
+		return nil, err
 	}
 	return plan, nil
+}
+
+func validateJumpChains(entries map[string]config.Connection) error {
+	for _, name := range sortedNames(entries) {
+		if err := validateJumpChainFor(entries, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateJumpChainFor(entries map[string]config.Connection, start string) error {
+	seen := map[string]bool{}
+	next := start
+	for next != "" {
+		if seen[next] {
+			return fmt.Errorf("SSH jump cycle at %q", next)
+		}
+		if len(seen) >= 32 {
+			return fmt.Errorf("SSH jump chain exceeds 32 connections")
+		}
+		seen[next] = true
+		c, ok := entries[next]
+		if !ok {
+			return fmt.Errorf("jump connection %q does not exist", next)
+		}
+		next = c.Jump
+	}
+	return nil
 }
 
 // proxyCommandNames lists imported connections that would execute a local

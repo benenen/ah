@@ -59,6 +59,7 @@ func TestConnectionTagsNotesAndFilters(t *testing.T) {
 		{[]string{"--tag", "PROD"}, []string{"db", "web1"}},
 		{[]string{"--tag", "prod", "--tag", "shop"}, []string{"web1"}},
 		{[]string{"--tag", "prod,shop"}, []string{"web1"}},
+		{[]string{"--tag", "prod, shop"}, []string{"web1"}},
 		{[]string{"--tag", "missing"}, []string{}},
 		{[]string{"WEB"}, []string{"web1", "web2"}},
 		{[]string{"10.0.0"}, []string{"db"}},
@@ -92,6 +93,7 @@ func TestConnectionTagsNotesAndFilters(t *testing.T) {
 	}
 
 	for _, args := range [][]string{
+		{"ls", "--tag", "has space"},
 		{"edit", "web1", "--remove-tag", "nope"},
 		{"edit", "web1", "--add-tag", "has space"},
 		{"edit", "web1", "--tag", "x", "--add-tag", "y"},

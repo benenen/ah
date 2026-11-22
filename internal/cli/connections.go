@@ -16,6 +16,12 @@ func (a *app) listCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "list [KEYWORD...]", Aliases: []string{"ls"}, Short: "List saved connections, optionally filtered by tag or keyword",
 		Long: "List saved connections. --tag keeps connections carrying every given tag; KEYWORD keeps connections whose name, host, user, note or tags contain every keyword. Matching ignores case.",
 		Args: cobra.ArbitraryArgs, ValidArgsFunction: cobra.NoFileCompletions, RunE: func(cmd *cobra.Command, args []string) error {
+			filter.tags = normalizeTags(filter.tags)
+			for _, tag := range filter.tags {
+				if err := config.ValidateTag(tag); err != nil {
+					return err
+				}
+			}
 			entries, err := a.connections()
 			if err != nil {
 				return err
@@ -111,6 +117,16 @@ func (a *app) newCommand() *cobra.Command {
 		if _, ok := existing[args[0]]; ok {
 			return fmt.Errorf("connection %q already exists", args[0])
 		}
+		if c.Jump != "" {
+			preview := make(map[string]config.Connection, len(existing)+1)
+			for k, v := range existing {
+				preview[k] = v
+			}
+			preview[args[0]] = c
+			if err := validateJumpChainFor(preview, args[0]); err != nil {
+				return err
+			}
+		}
 		if password {
 			c.Password, err = a.promptPassword(cmd, args[0])
 			if err != nil {
@@ -128,7 +144,7 @@ func (a *app) newCommand() *cobra.Command {
 				return fmt.Errorf("connection %q already exists", args[0])
 			}
 			m[args[0]] = c
-			return nil
+			return validateJumpChainFor(m, args[0])
 		}); err != nil {
 			return err
 		}
@@ -262,6 +278,17 @@ func (a *app) editCommand() *cobra.Command {
 				return err
 			}
 			m[args[0]] = c
+			if err := validateJumpChainFor(m, args[0]); err != nil {
+				return err
+			}
+			for _, other := range sortedNames(m) {
+				if other == args[0] || !usesJumpTarget(m, other, args[0]) {
+					continue
+				}
+				if err := validateJumpChainFor(m, other); err != nil {
+					return err
+				}
+			}
 			return nil
 		}); err != nil {
 			return err
@@ -307,6 +334,15 @@ func (a *app) removeCommand() *cobra.Command {
 			if _, ok := m[args[0]]; !ok {
 				return fmt.Errorf("connection %q does not exist", args[0])
 			}
+			var dependents []string
+			for _, other := range sortedNames(m) {
+				if other != args[0] && m[other].Jump == args[0] {
+					dependents = append(dependents, other)
+				}
+			}
+			if len(dependents) > 0 {
+				return fmt.Errorf("connection %q is used as jump by %s", args[0], strings.Join(dependents, ", "))
+			}
 			delete(m, args[0])
 			return nil
 		}); err != nil {
@@ -315,4 +351,21 @@ func (a *app) removeCommand() *cobra.Command {
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s\n", args[0])
 		return err
 	}}
+}
+
+func usesJumpTarget(entries map[string]config.Connection, start, target string) bool {
+	seen := map[string]bool{}
+	next := start
+	for next != "" && !seen[next] && len(seen) < 32 {
+		seen[next] = true
+		c, ok := entries[next]
+		if !ok {
+			return false
+		}
+		if c.Jump == target {
+			return true
+		}
+		next = c.Jump
+	}
+	return false
 }

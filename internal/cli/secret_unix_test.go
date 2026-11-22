@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -90,4 +92,33 @@ func (w *notifyWriter) Write(p []byte) (int, error) {
 		w.notified = true
 	}
 	return len(p), nil
+}
+
+func TestPollByteDrainsBufferedBytesOnHUP(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if _, err := w.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	var got []byte
+	for {
+		b, err := pollByte(ctx, int(r.Fd()))
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("pollByte: %v", err)
+		}
+		got = append(got, b)
+	}
+	if string(got) != "ok" {
+		t.Fatalf("got %q, want %q", got, "ok")
+	}
 }

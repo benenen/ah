@@ -422,4 +422,26 @@ func TestRecursiveCopyWithBackupAndReplay(t *testing.T) {
 	} else if data, _ := os.ReadFile(b[0]); string(data) != "v2" {
 		t.Fatalf("newest backup holds %q", data)
 	}
+
+	// clean rejects search-only filter flags instead of silently deleting everything.
+	if _, err := run("history", "clean", "--status", "failed"); err == nil {
+		t.Fatal("history clean accepted --status")
+	}
+	if _, err := run("history", "clean", "--before", "2020-01-01T00:00:00Z"); err == nil {
+		t.Fatal("history clean accepted --before")
+	}
+	if out, err := run("history", "search", "--status", "success"); err != nil || !strings.Contains(out, id) {
+		t.Fatalf("history search --status failed: %s %v", out, err)
+	}
+
+	// history run --force=false prevents replacement even if the recorded copy used --backup.
+	if err := os.WriteFile(filepath.Join(tree, "index.html"), []byte("v4"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run("history", "run", id, "--force=false"); err == nil {
+		t.Fatal("history run --force=false replaced existing destination from --backup record")
+	}
+	if data, _ := os.ReadFile(filepath.Join(remote, "index.html")); string(data) != "v3" {
+		t.Fatalf("destination modified under --force=false: %q", data)
+	}
 }

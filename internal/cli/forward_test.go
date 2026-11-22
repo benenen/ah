@@ -264,3 +264,56 @@ func TestForwardKillCancelsStartingBeforeLock(t *testing.T) {
 		t.Fatalf("record after kill: %+v %v", saved, err)
 	}
 }
+
+func TestForwardRestartCancelsStartingBeforeLock(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	cfgPath := filepath.Join(dir, "connections.toml")
+	if out, err := execute(t, "--config", cfgPath, "new", "fixture", "--host", "127.0.0.1", "--user", "tester"); err != nil {
+		t.Fatalf("new connection: %s %v", out, err)
+	}
+	r, err := forward.Allocate(forward.Local, "fixture", "127.0.0.1:0", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ConfigPath = cfgPath
+	if err := r.Save(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := forward.Lock(context.Background(), r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startup, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reg, err := forward.RegisterStarting(r, cancel)
+	if err != nil {
+		_ = lock.Close()
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		<-startup.Done()
+		closeErr := reg.Close(context.Canceled)
+		done <- errors.Join(closeErr, lock.Close())
+	}()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	ctx, stop := context.WithTimeout(context.Background(), time.Second)
+	defer stop()
+	cmd := New()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	// No SSH server runs on port 22, so restart should cancel starting quickly and
+	// fail on SSH dial rather than deadlocking on the startup lock.
+	cmd.SetArgs([]string{"--timeout", "150ms", "forward", "restart", r.ID})
+	err = cmd.ExecuteContext(ctx)
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected fast dial error instead of lock deadlock, got: %v", err)
+	}
+}

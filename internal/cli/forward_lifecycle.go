@@ -152,6 +152,55 @@ func (a *app) forwardStartCommand(restart bool) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout+5*time.Second)
 			defer cancel()
+			validateRestartConfig := func(r forward.Record) (app, error) {
+				options := *a
+				if !cmd.Flags().Changed("config") && r.ConfigPath != "" {
+					options.configPath = r.ConfigPath
+				}
+				if !cmd.Flags().Changed("key-file") && r.KeyPath != "" {
+					options.keyPath = r.KeyPath
+				}
+				if !cmd.Flags().Changed("known-hosts") && r.KnownHosts != "" {
+					options.knownHosts = r.KnownHosts
+				}
+				if !cmd.Flags().Changed("timeout") && r.Timeout > 0 {
+					options.timeout = r.Timeout
+				}
+				if !cmd.Flags().Changed("keepalive") {
+					options.keepAlive = r.KeepAlive
+				}
+				if !cmd.Flags().Changed("continue-on-error") {
+					options.forwardContinue = r.ContinueOnError
+				}
+				if !cmd.Flags().Changed("reconnect") {
+					options.forwardReconnect = r.Reconnect
+				}
+				// Validate configuration before stopping a working forward.
+				c, err := options.connection(r.Name)
+				if err != nil {
+					return options, err
+				}
+				if _, err := options.resolveSSHRoute(r.Name, c); err != nil {
+					return options, err
+				}
+				return options, nil
+			}
+			stoppedStartup := false
+			if restart {
+				current, err := forward.Read(args[0])
+				if err != nil {
+					return err
+				}
+				if current.Status == "starting" {
+					if _, err := validateRestartConfig(current); err != nil {
+						return err
+					}
+					if err := forward.Stop(ctx, current.ID); err != nil {
+						return err
+					}
+					stoppedStartup = true
+				}
+			}
 			lock, err := forward.Lock(ctx, args[0])
 			if err != nil {
 				return err
@@ -161,37 +210,11 @@ func (a *app) forwardStartCommand(restart bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			options := *a
-			if !cmd.Flags().Changed("config") && r.ConfigPath != "" {
-				options.configPath = r.ConfigPath
-			}
-			if !cmd.Flags().Changed("key-file") && r.KeyPath != "" {
-				options.keyPath = r.KeyPath
-			}
-			if !cmd.Flags().Changed("known-hosts") && r.KnownHosts != "" {
-				options.knownHosts = r.KnownHosts
-			}
-			if !cmd.Flags().Changed("timeout") && r.Timeout > 0 {
-				options.timeout = r.Timeout
-			}
-			if !cmd.Flags().Changed("keepalive") {
-				options.keepAlive = r.KeepAlive
-			}
-			if !cmd.Flags().Changed("continue-on-error") {
-				options.forwardContinue = r.ContinueOnError
-			}
-			if !cmd.Flags().Changed("reconnect") {
-				options.forwardReconnect = r.Reconnect
-			}
-			// Validate configuration before stopping a working forward.
-			c, err := options.connection(r.Name)
+			options, err := validateRestartConfig(r)
 			if err != nil {
 				return err
 			}
-			if _, err := options.resolveSSHRoute(r.Name, c); err != nil {
-				return err
-			}
-			if restart && (r.Status == "running" || r.Status == "starting") {
+			if restart && (!stoppedStartup && (r.Status == "running" || r.Status == "starting")) {
 				if err := forward.Stop(ctx, r.ID); err != nil {
 					return err
 				}

@@ -188,3 +188,38 @@ func TestJumpHandshakeTimeoutReleasesChain(t *testing.T) {
 		t.Fatal("jump channel leaked after handshake timeout")
 	}
 }
+
+func TestJumpValidationOnNewEditRemove(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "connections.toml")
+	run := func(args ...string) (string, error) { return execute(t, append([]string{"--config", p}, args...)...) }
+
+	if out, err := run("new", "app", "--host", "10.0.0.2", "--user", "u", "--jump", "missing"); err == nil {
+		t.Fatalf("new accepted missing jump: %s", out)
+	}
+	if out, err := run("new", "bastion", "--host", "10.0.0.1", "--user", "u"); err != nil {
+		t.Fatalf("new bastion: %s %v", out, err)
+	}
+	if out, err := run("new", "app", "--host", "10.0.0.2", "--user", "u", "--jump", "bastion"); err != nil {
+		t.Fatalf("new app: %s %v", out, err)
+	}
+	if out, err := run("edit", "app", "--jump", "app"); err == nil {
+		t.Fatalf("edit accepted self jump: %s", out)
+	}
+	if out, err := run("edit", "bastion", "--jump", "app"); err == nil {
+		t.Fatalf("edit accepted jump cycle: %s", out)
+	}
+	if out, err := run("rm", "bastion"); err == nil || !strings.Contains(out, "app") {
+		if err == nil {
+			t.Fatalf("rm deleted referenced jump: %s", out)
+		}
+		if !strings.Contains(err.Error(), "app") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if out, err := run("edit", "app", "--jump", ""); err != nil {
+		t.Fatalf("clear jump: %s %v", out, err)
+	}
+	if out, err := run("rm", "bastion"); err != nil {
+		t.Fatalf("rm unreferenced bastion: %s %v", out, err)
+	}
+}
