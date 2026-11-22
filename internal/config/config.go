@@ -226,7 +226,7 @@ func ValidateShell(shell string) error {
 	// The name is placed in a remote command line, so allow only characters
 	// that no shell treats specially.
 	if !shellPattern.MatchString(shell) {
-		return fmt.Errorf("shell must be a shell name or path using only letters, digits and . _ + - / \\ :")
+		return fmt.Errorf("shell must be a shell name or path using only letters, digits and : . _ + - / \\")
 	}
 	return nil
 }

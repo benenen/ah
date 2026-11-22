@@ -148,7 +148,8 @@ func Allocate(kind, name, listen, target string) (Record, error) {
 	}
 	defer func() { _ = os.Remove(f.Name()) }()
 	err = json.NewEncoder(f).Encode(r)
-	if err = errors.Join(err, f.Close()); err != nil {
+	err = errors.Join(err, f.Sync(), f.Close())
+	if err != nil {
 		return Record{}, err
 	}
 	// Publish complete JSON without overwriting an existing ID.
@@ -189,7 +190,7 @@ func (r Record) Save() error {
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
 	_, err = tmp.Write(data)
-	if err = errors.Join(err, tmp.Close()); err != nil {
+	if err = errors.Join(err, tmp.Sync(), tmp.Close()); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), p)

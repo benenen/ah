@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
@@ -239,7 +240,8 @@ func (s *Store) SearchFiltered(ctx context.Context, query string, limit int, opt
 	if opts.Connection != "" {
 		statement += ` AND (substr(source,1,?)=? OR substr(destination,1,?)=?)`
 		prefix := opts.Connection + ":"
-		args = append(args, len(prefix), prefix, len(prefix), prefix)
+		n := utf8.RuneCountInString(prefix)
+		args = append(args, n, prefix, n, prefix)
 	}
 	if !opts.After.IsZero() {
 		statement += ` AND started_at>=?`

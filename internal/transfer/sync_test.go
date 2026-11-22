@@ -224,4 +224,7 @@ func TestDirectorySyncMissingRootAndPermissionDifference(t *testing.T) {
 	if _, err := SyncDirectories(context.Background(), nil, nil, source, filepath.Join(dir, "missing", "child"), opts); err == nil {
 		t.Fatal("accepted missing parent")
 	}
+	if _, err := SyncDirectories(context.Background(), nil, nil, source, target, SyncOptions{Delete: true, TreeOptions: TreeOptions{Options: Options{BackupKeep: 2}}}); err == nil {
+		t.Fatal("accepted sync --delete with --backup")
+	}
 }

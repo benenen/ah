@@ -53,6 +53,9 @@ func DiffDirectories(ctx context.Context, src, dst *sftp.Client, source, target 
 // SyncDirectories publishes changed files first, then removes target-only entries
 // when requested. A failure leaves completed changes in place; the tree is not atomic.
 func SyncDirectories(ctx context.Context, src, dst *sftp.Client, source, target string, opts SyncOptions) (result TreeResult, err error) {
+	if opts.BackupKeep > 0 && opts.Delete {
+		return result, fmt.Errorf("sync --delete cannot be combined with --backup")
+	}
 	defer closeOnCancel(ctx, src, dst)(&err)
 	sf, tf := filesystem{src}, filesystem{dst}
 	p, err := planDirectories(ctx, sf, tf, source, target, opts)
@@ -76,9 +79,14 @@ func SyncDirectories(ctx context.Context, src, dst *sftp.Client, source, target 
 	}
 	var created []string
 	defer func() {
+		if ctx.Err() != nil && tf.client != nil {
+			return
+		}
 		for i := len(created) - 1; i >= 0; i-- {
 			rel := created[i]
-			err = errors.Join(err, tf.Chmod(tf.below(p.target, rel), p.sourceEntries[rel].info.Mode().Perm()))
+			if chmodErr := tf.Chmod(tf.below(p.target, rel), p.sourceEntries[rel].info.Mode().Perm()); chmodErr != nil && err == nil {
+				err = fmt.Errorf("set directory permissions: %w", chmodErr)
+			}
 		}
 	}()
 	for _, e := range p.changes {

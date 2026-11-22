@@ -82,6 +82,9 @@ func Export(entries map[string]Connection, store credentials.Store, passphrase [
 		if err := ValidateName(name); err != nil {
 			return nil, err
 		}
+		if c.Port == 0 {
+			c.Port = 22
+		}
 		if err := c.Validate(); err != nil {
 			return nil, fmt.Errorf("connection %s: %w", name, err)
 		}

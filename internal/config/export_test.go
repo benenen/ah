@@ -174,4 +174,12 @@ func TestEmptyConfigExportRoundTrip(t *testing.T) {
 	if len(bundle.Connections) != 0 {
 		t.Fatal("nonempty import")
 	}
+	// Default Port == 0 normalizes to 22 during Export, matching Encode/Decode.
+	data, err = Export(map[string]Connection{"def": {Host: "example.com", User: "alice"}}, credentials.Store{}, nil)
+	if err != nil {
+		t.Fatalf("export default port: %v", err)
+	}
+	if !bytes.Contains(data, []byte("port = 22")) {
+		t.Fatalf("exported TOML missing default port:\n%s", data)
+	}
 }
