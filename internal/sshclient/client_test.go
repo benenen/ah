@@ -185,7 +185,7 @@ func TestCancellationClosesActiveSFTP(t *testing.T) {
 	}
 	firstErr := c.Close()
 	secondErr := c.Close()
-	if firstErr != secondErr {
+	if !errors.Is(firstErr, secondErr) {
 		t.Fatalf("Close is not idempotent: %v, %v", firstErr, secondErr)
 	}
 }

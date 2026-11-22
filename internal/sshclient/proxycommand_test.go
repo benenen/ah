@@ -160,3 +160,18 @@ func TestTailBufferKeepsRecentOutput(t *testing.T) {
 		t.Fatalf("tail length %d suffix %q", len(got), got[len(got)-3:])
 	}
 }
+
+func TestExpandHomeTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := expandHome("~")
+	if err != nil || got != home {
+		t.Fatalf("expandHome(~) = %q, %v; want %q", got, err, home)
+	}
+	sub, err := expandHome("~/.ssh/known_hosts")
+	if err != nil || sub != filepath.Join(home, ".ssh", "known_hosts") {
+		t.Fatalf("expandHome(~/...) = %q, %v", sub, err)
+	}
+}

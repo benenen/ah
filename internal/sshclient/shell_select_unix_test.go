@@ -233,7 +233,7 @@ func TestPowerShellCommandEncoding(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(string(script), "\n")
-	if len(lines) != 5 || lines[1] != command || !strings.Contains(lines[0], "UTF8Encoding") || lines[3] != "} | Out-Default" || !strings.Contains(lines[4], "exit $LASTEXITCODE") {
+	if len(lines) != 5 || lines[1] != command || !strings.Contains(lines[0], "UTF8Encoding") || lines[2] != `} finally { $global:ahOk = $? }` || lines[3] != "} | Out-Default" || !strings.Contains(lines[4], "exit $LASTEXITCODE") {
 		t.Fatalf("script %q", script)
 	}
 }

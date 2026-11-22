@@ -72,9 +72,9 @@ func isPowerShell(shell string) bool {
 // exits with the native exit code when the last statement failed.
 func powerShellCommand(shell, command string) string {
 	script := `$OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); ` +
-		`if ($PSStyle) { $PSStyle.OutputRendering = "PlainText" }; $global:ahOk = $false; & {` + "\n" +
+		`if ($PSStyle) { $PSStyle.OutputRendering = "PlainText" }; $global:ahOk = $false; & { try {` + "\n" +
 		command + "\n" +
-		`$global:ahOk = $?` + "\n" +
+		`} finally { $global:ahOk = $? }` + "\n" +
 		`} | Out-Default` + "\n" +
 		`if ($global:ahOk) { exit 0 }; if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1`
 	encoded := base64.StdEncoding.EncodeToString([]byte(script))

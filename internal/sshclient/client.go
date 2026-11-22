@@ -70,7 +70,10 @@ type Client struct {
 }
 
 func expandHome(path string) (string, error) {
-	if path == "~" || strings.HasPrefix(path, "~/") {
+	if path == "~" {
+		return os.UserHomeDir()
+	}
+	if strings.HasPrefix(path, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
@@ -412,6 +415,9 @@ func hostKeyCallback(ctx context.Context, opts Options, clock *handshakeClock) s
 			if err := clock.pause(); err != nil {
 				return err
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		trust, err := opts.TrustHost(host, ssh.FingerprintSHA256(key))
 		if clock != nil {
