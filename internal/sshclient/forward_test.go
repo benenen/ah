@@ -571,3 +571,85 @@ func TestForwardRemoteContinuesAfterTargetFailure(t *testing.T) {
 	}
 	<-echoDone
 }
+
+func TestForwardDynamicTimeoutReplyAfterSlowHandshake(t *testing.T) {
+	release := make(chan struct{})
+	f := testutil.StartForwardSSH(t, func(ch ssh.NewChannel) {
+		<-release
+		_ = ch.Reject(ssh.ConnectionFailed, "test finished")
+	})
+	defer close(release)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	timeout := 120 * time.Millisecond
+	c, err := sshclient.Dial(ctx, f.Connection, sshclient.Options{KnownHosts: f.KnownHosts, Timeout: timeout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.ForwardDynamic(ctx, listener, nil) }()
+	conn, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	// Consume most of the initial handshake deadline before finishing the SOCKS5
+	// request, so the old deadline would have expired before dialCtx times out.
+	if _, err := conn.Write([]byte{5, 1, 0}); err != nil {
+		t.Fatal(err)
+	}
+	var method [2]byte
+	if _, err := io.ReadFull(conn, method[:]); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(80 * time.Millisecond)
+	if _, err := conn.Write([]byte{5, 1, 0, 1, 127, 0, 0, 1, 0, 80}); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	var reply [10]byte
+	if _, err := io.ReadFull(conn, reply[:]); err != nil {
+		t.Fatalf("expected TTL expired reply, got: %v", err)
+	}
+	if reply[1] != 0x06 {
+		t.Fatalf("reply code = %d, want 6 (TTL expired)", reply[1])
+	}
+	cancel()
+	<-done
+}
+
+func TestForwardDynamicCancelUnblocksIdleClient(t *testing.T) {
+	f := testutil.StartForwardSSH(t, echoTargets("app.internal:80"))
+	ctx, cancel := context.WithCancel(context.Background())
+	c, err := sshclient.Dial(ctx, f.Connection, sshclient.Options{KnownHosts: f.KnownHosts, Timeout: 5 * time.Second})
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.ForwardDynamic(ctx, listener, nil) }()
+	idle, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	defer func() { _ = idle.Close() }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ForwardDynamic blocked on idle SOCKS client after cancel")
+	}
+}

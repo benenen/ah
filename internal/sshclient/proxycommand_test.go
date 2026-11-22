@@ -126,10 +126,28 @@ func TestProxyCommandHandshakeTimeoutKillsProcess(t *testing.T) {
 }
 
 func TestExpandProxyCommand(t *testing.T) {
-	got := expandProxyCommand("uucli proxy dev %h %p %r 100%%", "10.0.0.1", 2222, "o'neil")
+	got, err := expandProxyCommandFor("linux", "uucli proxy dev %h %p %r 100%%", "10.0.0.1", 2222, "o'neil")
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := `uucli proxy dev '10.0.0.1' 2222 'o'\''neil' 100%`
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
+	}
+	win, err := expandProxyCommandFor("windows", "proxy.exe %h %p %r", "host.internal", 22, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if win != `proxy.exe "host.internal" 22 "alice"` {
+		t.Fatalf("windows expand = %q", win)
+	}
+	for _, bad := range []string{`a"b`, `%PATH%`, `a&calc`, `a|calc`, `a^b`, "a\nb"} {
+		if _, err := expandProxyCommandFor("windows", "proxy.exe %h %p", bad, 22, "alice"); err == nil {
+			t.Fatalf("windows accepted unsafe host %q", bad)
+		}
+		if _, err := expandProxyCommandFor("windows", "proxy.exe %h %r", "host.internal", 22, bad); err == nil {
+			t.Fatalf("windows accepted unsafe user %q", bad)
+		}
 	}
 }
 

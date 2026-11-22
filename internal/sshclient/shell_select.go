@@ -38,7 +38,7 @@ func interactiveCommand(shell string, windows bool) string {
 		pick = `s=` + shell + `; `
 		missing = `printf "ah: shell %s not found, starting the login shell\n" "$s" >&2; `
 	}
-	return `exec /bin/sh -c '` + pick + `if command -v "$s" >/dev/null 2>&1; then exec "$s" -l; fi; ` + missing + `exec "${SHELL:-/bin/sh}" -l'`
+	return `exec /bin/sh -c '` + pick + `if command -v -- "$s" >/dev/null 2>&1; then exec "$s" -l; fi; ` + missing + `exec "${SHELL:-/bin/sh}" -l'`
 }
 
 func isWindowsServer(version []byte) bool {

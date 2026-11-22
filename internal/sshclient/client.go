@@ -96,6 +96,11 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid SSH connection: %w", err)
 	}
+	if opts.Shell != "" {
+		if err := config.ValidateShell(opts.Shell); err != nil {
+			return nil, fmt.Errorf("invalid SSH shell: %w", err)
+		}
+	}
 	if opts.KnownHosts == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -156,9 +161,13 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		conn, err = opts.transport(dialCtx, address)
 	case c.ProxyCommand != "":
 		transportStage = "proxy-command"
-		proxyCommand, err = startProxyCommand(expandProxyCommand(c.ProxyCommand, c.Host, c.Port, c.User), destinationAddr(identity))
+		var expanded string
+		expanded, err = expandProxyCommand(c.ProxyCommand, c.Host, c.Port, c.User)
 		if err == nil {
-			conn = proxyCommand
+			proxyCommand, err = startProxyCommand(expanded, destinationAddr(identity))
+			if err == nil {
+				conn = proxyCommand
+			}
 		}
 	default:
 		conn, err = dialTransport(dialCtx, address, c.ProxyChain())

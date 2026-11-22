@@ -367,3 +367,10 @@ func TestPasswordOnlySkipsLocalIdentities(t *testing.T) {
 		})
 	}
 }
+
+func TestDialRejectsInvalidOptionShell(t *testing.T) {
+	c := config.Connection{Host: "127.0.0.1", Port: 22, User: "tester"}
+	if _, err := sshclient.Dial(context.Background(), c, sshclient.Options{Shell: "bash;id"}); err == nil {
+		t.Fatal("Dial accepted invalid Options.Shell")
+	}
+}

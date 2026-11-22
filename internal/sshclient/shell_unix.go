@@ -172,6 +172,12 @@ func (r *shellInput) Read(p []byte) (int, error) {
 }
 
 func (c *Client) runSudoSession(ctx context.Context, finishSetup func(), session *ssh.Session, command string, interactive bool, stdin *os.File, stdout, stderr io.Writer) error {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
 	action := "exec /bin/sh -c " + shellQuote(command)
 	if interactive {
 		// Default the escalated login shell to bash, falling back to /bin/sh when

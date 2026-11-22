@@ -26,6 +26,9 @@ type sudoIO struct {
 // startSudo consumes authentication before callers send shell input or SFTP
 // packets. Passwords are sent only in response to our unpredictable prompt.
 func (c *Client) startSudo(ctx context.Context, session *ssh.Session, action string, stderr io.Writer, terminal bool) (*sudoIO, error) {
+	if stderr == nil {
+		stderr = io.Discard
+	}
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err

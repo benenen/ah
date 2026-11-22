@@ -19,7 +19,11 @@ const proxyStderrLimit = 4096
 
 // expandProxyCommand substitutes OpenSSH-style tokens. Values are quoted for
 // the shell so a host or user can never inject additional commands.
-func expandProxyCommand(command, host string, port int, user string) string {
+func expandProxyCommand(command, host string, port int, user string) (string, error) {
+	return expandProxyCommandFor(runtime.GOOS, command, host, port, user)
+}
+
+func expandProxyCommandFor(goos, command, host string, port int, user string) (string, error) {
 	var b strings.Builder
 	for i := 0; i < len(command); i++ {
 		if command[i] != '%' || i+1 == len(command) {
@@ -29,11 +33,19 @@ func expandProxyCommand(command, host string, port int, user string) string {
 		i++
 		switch command[i] {
 		case 'h':
-			b.WriteString(localShellQuote(host))
+			q, err := localShellQuote(goos, host)
+			if err != nil {
+				return "", fmt.Errorf("proxy_command %%h: %w", err)
+			}
+			b.WriteString(q)
 		case 'p':
 			b.WriteString(strconv.Itoa(port))
 		case 'r':
-			b.WriteString(localShellQuote(user))
+			q, err := localShellQuote(goos, user)
+			if err != nil {
+				return "", fmt.Errorf("proxy_command %%r: %w", err)
+			}
+			b.WriteString(q)
 		case '%':
 			b.WriteByte('%')
 		default:
@@ -41,28 +53,27 @@ func expandProxyCommand(command, host string, port int, user string) string {
 			b.WriteByte(command[i])
 		}
 	}
-	return b.String()
+	return b.String(), nil
 }
 
-// localShellQuote quotes for the shell that runs the proxy command. On
-// Windows host and user are validated to contain no whitespace.
-func localShellQuote(s string) string {
-	if runtime.GOOS == "windows" {
-		return `"` + s + `"`
+// localShellQuote quotes for the shell that runs the proxy command. On Windows
+// cmd.exe metacharacters are rejected because cmd.exe has no universal quoting
+// for %VAR%, quotes or command separators.
+func localShellQuote(goos, s string) (string, error) {
+	if goos == "windows" {
+		if strings.ContainsAny(s, "\"%!^&|<>\r\n") {
+			return "", fmt.Errorf("value %q contains characters unsafe for Windows cmd.exe", s)
+		}
+		return `"` + s + `"`, nil
 	}
-	return shellQuote(s)
+	return shellQuote(s), nil
 }
 
 // startProxyCommand runs command through the platform shell and returns its
 // stdin/stdout as the SSH transport. The process is owned by the returned
 // conn: Close kills and reaps it.
 func startProxyCommand(command string, target net.Addr) (*commandConn, error) {
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd.exe", "/C", command)
-	} else {
-		cmd = exec.Command("/bin/sh", "-c", command)
-	}
+	cmd := newProxyCommand(command)
 	isolateProxyCommand(cmd)
 	// A descendant that escaped the kill may still hold stderr; do not let it
 	// block Close.
@@ -83,6 +94,10 @@ func startProxyCommand(command string, target net.Addr) (*commandConn, error) {
 		stdout.Close()
 		return nil, fmt.Errorf("start proxy command: %w", err)
 	}
+	if err := attachProxyProcess(cmd, &c.res); err != nil {
+		_ = c.Close()
+		return nil, fmt.Errorf("isolate proxy command: %w", err)
+	}
 	return c, nil
 }
 
@@ -94,6 +109,7 @@ type commandConn struct {
 	stdout io.ReadCloser
 	target net.Addr
 	stderr tailBuffer
+	res    proxyResources
 	once   sync.Once
 	err    error
 }
@@ -111,8 +127,9 @@ func (c *commandConn) Close() error {
 	c.once.Do(func() {
 		_ = c.stdin.Close()
 		// The SSH session is over; the proxy has nothing left to deliver.
-		killProxyCommand(c.cmd)
+		killProxyCommand(c.cmd, &c.res)
 		err := c.cmd.Wait()
+		releaseProxyResources(&c.res)
 		var exit *exec.ExitError
 		if err != nil && !errors.As(err, &exit) && !errors.Is(err, exec.ErrWaitDelay) {
 			c.err = err

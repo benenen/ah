@@ -171,3 +171,26 @@ func TestSudoPromptCancellation(t *testing.T) {
 		t.Fatal("sudo cancellation blocked")
 	}
 }
+
+func TestSudoExecNilWritersDoNotPanic(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	server := testutil.StartCommandSSH(t, func(command string, ch ssh.Channel) uint32 {
+		ready := regexp.MustCompile(`AH_SUDO_READY_[a-f0-9]+`).FindString(command)
+		io.WriteString(ch, ready)
+		io.WriteString(ch, "ok\n")
+		io.WriteString(ch.Stderr(), "warn\n")
+		return 0
+	})
+	c := server.Connection
+	c.Sudo = true
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	client, err := Dial(ctx, c, Options{KnownHosts: server.KnownHosts, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err := client.Exec("echo ok", nil, nil, nil); err != nil {
+		t.Fatalf("Exec with nil writers: %v", err)
+	}
+}

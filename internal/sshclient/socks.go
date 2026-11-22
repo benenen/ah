@@ -29,16 +29,25 @@ func (c *Client) serveSOCKS(ctx context.Context, local net.Conn) error {
 	if err := local.SetDeadline(time.Now().Add(c.timeout)); err != nil {
 		return err
 	}
+	stopRead := context.AfterFunc(ctx, func() { _ = local.Close() })
 	target, err := readSOCKSRequest(local)
+	if !stopRead() && ctx.Err() != nil {
+		return fmt.Errorf("SOCKS request from %s: %w", local.RemoteAddr(), ctx.Err())
+	}
 	if err != nil {
 		return fmt.Errorf("SOCKS request from %s: %w", local.RemoteAddr(), err)
+	}
+	if err := local.SetDeadline(time.Time{}); err != nil {
+		return err
 	}
 	// Answer a stalled channel open and release the client; the pending request
 	// itself ends when the server answers or the SSH connection closes.
 	dialCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	stop := context.AfterFunc(dialCtx, func() {
-		_ = writeSOCKSReply(local, socksTTLExpired)
+		if ctx.Err() == nil {
+			_ = writeSOCKSReplyWithTimeout(local, socksTTLExpired, c.timeout)
+		}
 		_ = local.Close()
 	})
 	remote, err := c.client.Dial("tcp", target)
@@ -54,13 +63,10 @@ func (c *Client) serveSOCKS(ctx context.Context, local net.Conn) error {
 		if errors.As(err, &rejected) && rejected.Reason == ssh.ConnectionFailed {
 			code = socksConnectionRefused
 		}
-		return errors.Join(fmt.Errorf("SOCKS connect %s: %w", target, err), writeSOCKSReply(local, code))
+		return errors.Join(fmt.Errorf("SOCKS connect %s: %w", target, err), writeSOCKSReplyWithTimeout(local, code, c.timeout))
 	}
 	defer func() { _ = remote.Close() }()
-	if err := writeSOCKSReply(local, socksSucceeded); err != nil {
-		return err
-	}
-	if err := local.SetDeadline(time.Time{}); err != nil {
+	if err := writeSOCKSReplyWithTimeout(local, socksSucceeded, c.timeout); err != nil {
 		return err
 	}
 	if err := relayForward(ctx, local, remote); err != nil {
@@ -139,4 +145,12 @@ func readSOCKSRequest(conn net.Conn) (string, error) {
 func writeSOCKSReply(conn net.Conn, code byte) error {
 	_, err := conn.Write([]byte{5, code, 0, 1, 0, 0, 0, 0, 0, 0})
 	return err
+}
+
+func writeSOCKSReplyWithTimeout(conn net.Conn, code byte, timeout time.Duration) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
+	err := writeSOCKSReply(conn, code)
+	return errors.Join(err, conn.SetWriteDeadline(time.Time{}))
 }
