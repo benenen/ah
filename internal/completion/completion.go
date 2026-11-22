@@ -2,6 +2,7 @@
 package completion
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -48,8 +49,14 @@ func RemotePaths(client *sftp.Client, partial string) ([]string, error) {
 		candidate := displayDir + name
 		isDir := entry.IsDir()
 		if entry.Mode()&os.ModeSymlink != 0 {
-			if target, statErr := client.Stat(path.Join(resolved, name)); statErr == nil {
+			target, statErr := client.Stat(path.Join(resolved, name))
+			if statErr == nil {
 				isDir = target.IsDir()
+			} else {
+				var statusErr *sftp.StatusError
+				if !os.IsNotExist(statErr) && !os.IsPermission(statErr) && !errors.As(statErr, &statusErr) {
+					return nil, fmt.Errorf("stat remote path: %w", statErr)
+				}
 			}
 		}
 		if isDir {

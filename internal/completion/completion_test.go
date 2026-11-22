@@ -54,4 +54,21 @@ func TestRemotePathsPreserveNamesAndDirectorySuffixes(t *testing.T) {
 	if _, err = RemotePaths(client, "~other/a"); err == nil {
 		t.Fatal("~user must not expand locally")
 	}
+	// Dangling symlinks still complete without failing the directory listing.
+	if err := os.Symlink(filepath.Join(dir, "missing-target"), filepath.Join(dir, "a-dangling")); err != nil {
+		t.Fatal(err)
+	}
+	got, err = RemotePaths(client, "a")
+	if err != nil {
+		t.Fatalf("dangling symlink failed completion: %v", err)
+	}
+	foundDangling := false
+	for _, c := range got {
+		if c == "a-dangling" {
+			foundDangling = true
+		}
+	}
+	if !foundDangling {
+		t.Fatalf("dangling symlink missing from %v", got)
+	}
 }

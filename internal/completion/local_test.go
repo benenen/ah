@@ -23,4 +23,10 @@ func TestLocalPaths(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("local completion %q want %q", got, want)
 	}
+	if _, err := LocalPaths("~root"); err == nil {
+		t.Fatal("~user must be rejected")
+	}
+	if _, err := LocalPaths("a\nb"); err == nil {
+		t.Fatal("control character in path must be rejected")
+	}
 }

@@ -1,6 +1,7 @@
 package completion
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,8 +12,14 @@ import (
 )
 
 func LocalPaths(partial string) ([]string, error) {
+	if strings.ContainsFunc(partial, unicode.IsControl) {
+		return nil, fmt.Errorf("control characters in path")
+	}
 	if partial == "~" {
 		return []string{"~/"}, nil
+	}
+	if strings.HasPrefix(partial, "~") && !strings.HasPrefix(partial, "~/") {
+		return nil, fmt.Errorf("use ~/ or an absolute path")
 	}
 	displayDir, prefix := filepath.Split(partial)
 	dir := displayDir
