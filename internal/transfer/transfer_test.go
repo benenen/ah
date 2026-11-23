@@ -15,7 +15,7 @@ import (
 	"github.com/pkg/sftp"
 )
 
-func localSFTP(t *testing.T) *sftp.Client {
+func localSFTP(t testing.TB) *sftp.Client {
 	t.Helper()
 	a, b := net.Pipe()
 	server, err := sftp.NewServer(a)
