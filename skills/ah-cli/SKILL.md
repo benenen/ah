@@ -148,17 +148,17 @@ MySQL 客户端必须写 `127.0.0.1`：写 `localhost` 会被当作 unix socket�
 
 先用 `f ls` 核对 ID、连接名和端口：`kill ID` 停止并保留记录；`start ID` 后台启动 stopped/failed 记录，运行中报错；`restart ID` 等待旧转发停止后后台启动，已停止时直接启动。start/restart 保留原 ID，恢复配置/密钥/known_hosts 路径、工作目录和超时，读取当前连接配置；显式全局选项可覆盖路径和超时。旧记录未保存的选项使用当前默认值，首次主机信任授权不随记录复用。
 
-`f rm ID` 删除 stopped/failed 记录及日志；`f rm -f ID` 先停止 running/starting 转发再删除。仅在用户授权停止该转发时使用 `-f`。`f rm --all` 只清 stopped/failed，其余打印 Skipped；`f rm --all -f` 会停掉当前用户的全部转发，只在用户明确要求全部清理时使用，之前先 `f ls` 告诉用户会断开哪些运行中的转发。控制通道不可达时命令报错并保留记录，不按旧 PID 杀进程；`stale` 不能当作已确认停止。记录不可读时只有 `-f` 能删，且会警告其工作进程可能仍在监听；应先查清是否有残留监听再删。顶层 `ah rm NAME` 删除的是连接配置，注意命令层级。
+`f rm ID` 删除 stopped/failed 记录及日志；`f rm -f ID` 先停止 running/starting 转发再删除（控制通道不可达的 `stale` 记录会在警告后删除，不按 PID 杀进程）；`f rm --stale` 批量清理所有 `stale` 记录。仅在用户授权停止该转发时使用 `-f`。`f rm --all` 只清 stopped/failed，其余打印 Skipped；`f rm --all -f` 会停掉当前用户的全部转发，只在用户明确要求全部清理时使用，之前先 `f ls` 告诉用户会断开哪些运行中的转发。`f ls --running` / `--status` 可按状态筛选。记录不可读时只有 `-f` 能删，且会警告其工作进程可能仍在监听；应先查清是否有残留监听再删。顶层 `ah rm NAME` 删除的是连接配置，注意命令层级。
 
 记录与日志位于用户配置目录 `ah/forwards/`，不随 `--config` 分组。确认启动成功还需核对 `f ls` 状态；报告 ID 和实际监听地址。
 
-默认情况下 SSH 断开或单次目标连接失败都会结束转发。需要长时间挂着的隧道按需组合：
+`forward` 默认开启 `--continue-on-error=true`（单个客户端/目标失败只断开该客户端）以及 `30s` 保活（若连接配置了 `keepalive` 则沿用连接配置，可用 `--keepalive 0` 关闭）。需要断线自动重连时加 `--reconnect`：
 
 ```sh
-ah --keepalive 20s f nas 15432 5432 --continue-on-error --reconnect -d
+ah --keepalive 20s f nas 15432 5432 --reconnect -d
 ```
 
-`--keepalive` 定期探活，等回复超过 `--timeout` 就判定断线；`--continue-on-error` 让 `-L/-R` 的单个客户端失败只断开该客户端；`--reconnect` 在首次启动成功后断线时按 1、2、4… 秒（上限 30 秒）退避重连，ID 和监听地址不变，`f ls` 的 ERROR 列显示 reconnecting 和最近断线原因。重连期间监听可能不可用、旧 TCP 连接会断，客户端要自己重连；重连不弹认证或信任提示。这些选项写入转发记录，start/restart 沿用，`--reconnect=false` 关闭。首次启动失败仍直接报错。
+`--keepalive` 定期探活，等回复超过 `--timeout` 就判定断线（也可通过 `ah new/edit --keepalive` 持久化到连接配置）；`--continue-on-error` 让 `-L/-R` 的单个客户端失败只断开该客户端（显式 `--continue-on-error=false` 恢复遇错即停）；`--reconnect` 在首次启动成功后断线时按 1、2、4… 秒（上限 30 秒）退避重连，ID 和监听地址不变，`f ls` 的 ERROR 列显示 reconnecting 和最近断线原因。重连期间监听可能不可用、旧 TCP 连接会断，客户端要自己重连；重连不弹认证或信任提示。这些选项写入转发记录，start/restart 沿用，`--reconnect=false` 关闭。首次启动失败仍直接报错。
 
 脚本里解析状态用 `f ls --json`，字段为 `id`、`name`、`listen`、`target`、`pid`、`status`、`started`、`error`；空列表输出 `[]`。单条记录损坏时该条 `status` 为 `corrupt` 并在 `error` 里给出原因，其余记录照常列出；`corrupt` 记录无法通过 CLI 核验或停止，别把它当成已停止。
 

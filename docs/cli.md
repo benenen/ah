@@ -340,7 +340,7 @@ ah --keepalive 30s forward nas 15432 5432 --continue-on-error -d
 
 `doctor` 按阶段报告配置、认证资料、TCP 或代理链、SSH 密钥交换、主机密钥校验、认证、sudo、SFTP 与复制所需扩展的检查结果，失败返回非零。sudo 未开启时跳过。它正常校验主机身份，首次连接仍需信任确认；SFTP 初始化也受超时限制。不创建测试文件，因此不验证具体目标目录的写权限或磁盘空间。
 
-`--keepalive DURATION` 定期发送 SSH 保活请求，默认 0 关闭；等待回复超过 `--timeout` 时关闭失去响应的 SSH 连接。服务端返回“不支持此请求”也算有效回复。`forward --continue-on-error` 让 `-L/-R` 的单次目标连接或传输失败只断开该客户端，并将错误写入 stderr（后台运行时写日志），随后继续监听。默认保留遇错结束的行为。SSH 通道打开超时仍需关闭整个 SSH 连接才能解除阻塞。保活与容错选项保存在转发记录中，start/restart 沿用，可显式覆盖。
+`--keepalive DURATION` 定期发送 SSH 保活请求，全局默认 0 关闭（可在 `new/edit --keepalive` 写入连接配置作为默认值，`edit --clear-keepalive` 清除，全局 `--keepalive` 可覆盖）；等待回复超过 `--timeout` 时关闭失去响应的 SSH 连接。服务端返回“不支持此请求”也算有效回复。`forward` 在未显式指定 `--keepalive` 且连接未配置时默认使用 `30s` 保活，可用 `--keepalive 0` 关闭；`forward --continue-on-error` 默认 `true`，让 `-L/-R` 的单次目标连接或传输失败只断开该客户端，并将错误写入 stderr（后台运行时写日志），随后继续监听（显式 `--continue-on-error=false` 可恢复遇错即停）。SSH 通道打开超时仍需关闭整个 SSH 连接才能解除阻塞。保活与容错选项保存在转发记录中，start/restart 沿用，可显式覆盖。
 
 ## 端口转发
 
@@ -376,16 +376,17 @@ ah forward rm --all -f
 
 新建转发时自动生成 ID。加 `-d` / `--daemon` 后脱离终端运行，SSH 和本地监听准备就绪后才返回 ID；
 不加则在前台运行，Ctrl+C 关闭监听、活动连接及 SSH 连接。后台模式支持 Linux/macOS，使用已保存密码、可用私钥或 SSH agent，不能交互输入密码或私钥口令。
-`ah forward ls` 显示当前用户的所有转发记录，包括 ID、类型、连接名、监听/目标地址、PID、状态和错误；
+`ah forward ls` 显示当前用户的所有转发记录，包括 ID、类型、连接名、监听/目标地址、PID、状态和错误，支持 `--status` / `--running` 筛选；
 `ah forward ls --json` 以稳定字段输出同一份列表（`id`、`type`、`name`、`listen`、`target`、`pid`、`status`、`started`、`error`；`type` 为 `local`/`dynamic`/`remote`），便于脚本消费，内部字段不进输出。
+`ah forward kill ID`、`start ID`、`restart ID`、`rm ID` 均支持按对应状态过滤的 ID Tab 补全。
 `ah forward kill ID` 通过私有控制通道停止对应转发，并等待关闭完成。前台转发也可按 ID 停止。
 `ah forward start ID` 按原 ID 在后台启动已停止或失败的转发；对运行中的转发报错。
 `ah forward restart ID` 等待旧转发停止后按原 ID 后台启动，已停止或失败时直接启动。
 启动会恢复记录的配置/密钥/known_hosts 路径、工作目录和超时，使用当前连接配置；显式全局选项可覆盖路径和超时。
 旧版记录未保存这些信息时使用当前默认值或显式选项。首次主机信任授权不会保存供重启复用。
-`ah forward rm ID` 删除已停止或失败的记录及日志；`ah forward rm -f ID` 先停止运行中或启动中的转发再删除。
+`ah forward rm ID` 删除已停止或失败的记录及日志；`ah forward rm -f ID` 先停止运行中或启动中的转发再删除（控制通道不可达的 `stale` 记录会在警告后删除，不按 PID 杀进程）；`ah forward rm --stale` 批量清理所有 `stale` 记录。
 `ah forward rm` 也可写作 `ah forward remove`，与顶层 `ah remove`/`ah rm` 对应。
-`ah forward rm --all` 删除所有已停止或失败的记录，其余（运行中、启动中、stale、不可读）在 stderr 提示跳过；`ah forward rm --all -f` 逐条按 `-f` 语义全部删除，某条失败（如 stale 的控制通道不可达）时保留该记录、继续处理其余并以非零退出码结束。`--all` 不能与 ID 同时使用。
+`ah forward rm --all` 删除所有已停止或失败的记录，其余（运行中、启动中、stale、不可读）在 stderr 提示跳过；`ah forward rm --all -f` 逐条按 `-f` 语义全部删除。`--all`、`--stale` 不能与 ID 同时使用。
 记录不可读（JSON 损坏）时普通 `ah forward rm ID` 报错并提示 `--force`，只有 `ah forward rm -f ID` 会删除，且会在 stderr 警告该记录的控制通道不可知、其工作进程可能仍在监听；文件名不是合法 ID 的游离文件不属记录，需手工清理。
 控制通道不可达时不会强删或按 PID 杀进程；无法确认停止时保留记录并报错。生命周期操作按 ID 加锁，删除后保留锁文件。
 停止和失败记录保留；异常中断留下的 running 记录在控制通道不可达时显示 stale，不根据旧 PID 杀进程。

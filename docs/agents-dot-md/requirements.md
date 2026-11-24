@@ -53,7 +53,7 @@ user = "bob"
 ## 复制与补全验收
 
 - A 到 B 的内容经运行 ah 的本机流式中转，使用两个 SSH/SFTP 会话；无需 A 能直连 B，不把整个文件读入内存。
-- 处理连接失败、权限不足、路径不存在、中途断线、取消、写入及关闭错误；失败返回非零退出码，不把部分文件报告为成功。
+- 处理连接失败、权限不足、路径不存在、中途断线、取消、写入及关闭错误；失败返回非零退出码，不把部分文件报告为成功。非 `-r` 复制目录时提示使用 `-r/--recursive`。
 - 以同目录临时文件暂存；远端默认使用 hardlink@openssh.com 原子发布，--force 使用 posix-rename@openssh.com；本地使用 os.Link/os.Rename。服务端不支持对应扩展时失败；覆盖前保护原目标。失败尽力清理，连接中断时在错误中报告可能残留的临时文件。
 - `cp -r`：按 cp -r 解析目标（已有目录则落到 目标/源名，否则新建）；落点已存在时无 -f 在写入前报错，-f 合并（同名文件逐个原子替换，多余文件保留）；文件/目录类型冲突报错；同一文件系统禁止复制进自身。符号链接与特殊文件跳过并在 stderr 报告。目录先以 0700 建立，结束后自深向浅设源权限位，合并时不改已有目录权限。树整体非原子，失败保留已复制文件。本地目标逐个文件检查历史库保护。
 - `--backup [--backup-keep N]`（默认 5，1–1000）：替换已有普通文件前，将其硬链接为同目录 `bak.NAME.bak-<UTC 纳秒时间戳>`，此前按时间删除最旧的同名备份使总数不超过 N；只识别严格匹配该格式的文件。隐含覆盖（用于目录时隐含合并）；远端需 hardlink@openssh.com。
@@ -132,8 +132,8 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 
 每次新建生成独立 ID，-d 后台运行（Linux/macOS），无 -d 保留前台和 Ctrl+C。
 后台只在 SSH 与本地监听准备完成后报告成功，不能交互索取密码；失败向调用方返回非零状态。
-`forward ls` 展示当前用户的前后台记录和运行状态，`--json` 输出稳定的 id/name/listen/target/pid/status/started/error 字段；`forward kill ID` 通过带 ID 校验的私有控制通道取消并等待停止，
-避免旧 PID 被复用时误杀其他进程。停止/失败记录保留，无法联系的 running 记录显示 stale。
+`forward ls` 展示当前用户的前后台记录和运行状态，支持 `--status` / `--running` 筛选（互斥），`--json` 输出稳定的 id/name/listen/target/pid/status/started/error 字段；`forward kill ID` 通过带 ID 校验的私有控制通道取消并等待停止，
+避免旧 PID 被复用时误杀其他进程。停止/失败记录保留，无法联系的 running 记录显示 stale。`kill`/`start`/`restart`/`rm` 支持按对应状态过滤的转发 ID Tab 补全。
 单条记录文件损坏（或文件名不是合法 ID）时只将该条标为 corrupt 并附原因，不得因此让整份列表失败；corrupt 记录无法核验或停止其工作进程，也不根据残留 PID 杀进程。
 状态和日志保存在用户配置目录 ah/forwards（目录 0700，文件 0600），不随 --config 分组。
 取消、SSH 断开和转发错误必须释放监听、SSH、活动 TCP 和 goroutine；支持双向半关闭。
@@ -143,8 +143,8 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 `forward restart ID` 先等待活动转发停止，再按原 ID 后台启动，stopped/failed 则直接启动。
 保存启动配置/密钥/known_hosts 路径、工作目录和超时，不保存凭据或首次信任授权；重启读取当前连接配置，显式全局选项可覆盖。
 旧记录缺少启动信息时使用当前默认值或显式选项。
-`forward rm ID` 删除 stopped/failed 记录和日志；`forward rm -f ID` 先取消 running/starting 转发，确认停止后删除。
-`forward rm --all` 只删 stopped/failed 并在 stderr 提示跳过其余；`--all -f` 对每条按 `rm -f` 处理，单条失败不中断其余，最终非零退出；`--all` 与 ID 互斥。
+`forward rm ID` 删除 stopped/failed 记录和日志；`forward rm -f ID` 先取消 running/starting 转发，确认停止后删除；若控制通道不可达（stale），警告后调用 `RemoveStale` 删除记录与日志而不按 PID 杀进程。
+`forward rm --stale` 批量删除所有 stale 记录（不杀 PID）；`forward rm --all` 只删 stopped/failed 并在 stderr 提示跳过其余；`--all -f` 对每条按 `rm -f` 处理，单条失败不中断其余，最终非零退出；`--all`、`--stale` 与 ID 互斥。
 记录不可读时只有 `-f` 可删（普通 rm 报错并提示），删除前必须向 stderr 警告其控制通道不可知、可能残留监听；不可读记录不得绕过状态检查。
 生命周期操作按 ID 加锁（锁文件保留）；控制通道不可达时保留记录并报错，不通过旧 PID 杀进程。
 
@@ -164,7 +164,7 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 
 `doctor NAME` 检查配置、认证资料加载、TCP/代理链、SSH 密钥交换、host key、认证、sudo（启用时）、SFTP 及 hardlink/posix-rename 扩展，各阶段输出 OK/FAIL；失败非零。不绕过主机身份校验，不写测试文件。SFTP 启动受 --timeout 约束。
 
-全局 `--keepalive` 默认 0 关闭，负值拒绝；非零周期发送 want-reply SSH 请求，任意回复视为存活，超时按 --timeout 关闭连接，取消与关闭回收请求 goroutine。`forward --continue-on-error` 默认 false，启用时单次 -L/-R 目标拨号/传输错误写 stderr 并继续监听；SSH channel-open 超时仍结束传输。后台与 start/restart 保留选项，显式标志覆盖保存值。
+全局 `--keepalive` 默认 0 关闭（连接 TOML 支持 `keepalive` 持久化默认保活，由 `new/edit --keepalive` 和 `edit --clear-keepalive` 管理，全局 `--keepalive` 可覆盖；`forward` 未显式指定 `--keepalive` 且连接未配置时默认 30s），负值拒绝；非零周期发送 want-reply SSH 请求，任意回复视为存活，超时按 --timeout 关闭连接，取消与关闭回收请求 goroutine。`forward --continue-on-error` 默认 true，启用时单次 -L/-R 目标拨号/传输错误写 stderr 并继续监听（`CloseWrite` 的 `net.ErrClosed`/`io.EOF`/`ENOTCONN` 视为正常收尾）；SSH channel-open 超时仍结束传输。后台与 start/restart 保留选项，显式标志覆盖保存值。
 
 ## 重连与 SSH 跳板扩展
 
