@@ -253,7 +253,7 @@ func testCopyTree(t *testing.T, l *lab) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(tree, "readonly"), 0755) })
 
-	l.fails("regular file", "cp", tree, "lab:~/")
+	l.fails("-r/--recursive", "cp", tree, "lab:~/")
 	r := l.run("cp", "-r", tree, "lab:~/")
 	if r.code != 0 || !strings.Contains(r.stdout, "Copied 4 files") || !strings.Contains(r.stderr, "link.html (symbolic link)") {
 		t.Fatalf("upload tree: %s", r)
