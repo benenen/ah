@@ -207,14 +207,14 @@ func TestForwardRemoveAll(t *testing.T) {
 	}
 
 	out, err = execute(t, "forward", "rm", "--all", "-f", "--timeout", "100ms")
-	if err == nil {
-		t.Fatalf("rm --all -f hid the unreachable forward: %q", out)
+	if err != nil {
+		t.Fatalf("rm --all -f: %v: %s", err, out)
 	}
-	if !strings.Contains(out, "Removed 0123456789abcdef") || !strings.Contains(out, "Failed "+stale.ID) {
+	if !strings.Contains(out, "Removed 0123456789abcdef") || !strings.Contains(out, "Removed "+stale.ID) || !strings.Contains(out, "removing stale record without signaling PID") {
 		t.Fatalf("output: %q", out)
 	}
-	if exists("0123456789abcdef") || !exists(stale.ID) {
-		t.Fatal("rm --all -f must delete the corrupt record and keep the unreachable one")
+	if exists("0123456789abcdef") || exists(stale.ID) {
+		t.Fatal("rm --all -f must delete both corrupt and stale records")
 	}
 }
 
@@ -340,5 +340,141 @@ func TestForwardFlagsScopedAndErrorSanitized(t *testing.T) {
 	}
 	if strings.Contains(out, "second\tline") || !strings.Contains(out, "first line second line") {
 		t.Fatalf("multiline error was not sanitized:\n%s", out)
+	}
+}
+
+func TestForwardListFilterRemoveStaleAndCompletion(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	live, err := forward.Allocate(forward.Local, "live", "127.0.0.1:8080", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := forward.Register(live, func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reg.Close(nil) })
+
+	stopped, err := forward.Allocate(forward.Local, "stopped-one", "127.0.0.1:8081", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped.Status = "stopped"
+	if err := stopped.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	stale, err := forward.Allocate(forward.Local, "stale-one", "127.0.0.1:8082", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.Status = "running"
+	stale.Socket = filepath.Join(dir, "missing.sock")
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Filtering: --running and --status
+	out, err := execute(t, "forward", "ls", "--running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, live.ID) || strings.Contains(out, stopped.ID) || strings.Contains(out, stale.ID) {
+		t.Fatalf("--running filter unexpected:\n%s", out)
+	}
+	out, err = execute(t, "forward", "ls", "--status", "stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, stale.ID) || strings.Contains(out, live.ID) || strings.Contains(out, stopped.ID) {
+		t.Fatalf("--status stale filter unexpected:\n%s", out)
+	}
+	if _, err := execute(t, "forward", "ls", "--status", "bogus"); err == nil {
+		t.Fatal("accepted invalid --status")
+	}
+	if _, err := execute(t, "forward", "ls", "--running", "--status", "stopped"); err == nil {
+		t.Fatal("accepted --running with --status")
+	}
+
+	// Completion: kill/start/restart/rm filter by appropriate status.
+	compKill, err := execute(t, "__complete", "forward", "kill", "")
+	if err != nil || !strings.Contains(compKill, live.ID) || strings.Contains(compKill, stopped.ID) {
+		t.Fatalf("kill completion unexpected: %q %v", compKill, err)
+	}
+	compStart, err := execute(t, "__complete", "forward", "start", "")
+	if err != nil || !strings.Contains(compStart, stopped.ID) || strings.Contains(compStart, live.ID) {
+		t.Fatalf("start completion unexpected: %q %v", compStart, err)
+	}
+	compRm, err := execute(t, "__complete", "forward", "rm", "")
+	if err != nil || !strings.Contains(compRm, live.ID) || !strings.Contains(compRm, stopped.ID) || !strings.Contains(compRm, stale.ID) {
+		t.Fatalf("rm completion unexpected: %q %v", compRm, err)
+	}
+
+	// Plain rm on stale refuses and hints --force/--stale.
+	if _, err := execute(t, "forward", "rm", stale.ID); err == nil || !strings.Contains(err.Error(), "--stale") {
+		t.Fatalf("expected stale hint, got: %v", err)
+	}
+
+	// rm --stale removes only stale records and leaves live & stopped intact.
+	out, err = execute(t, "forward", "rm", "--stale")
+	if err != nil {
+		t.Fatalf("rm --stale: %v: %s", err, out)
+	}
+	if !strings.Contains(out, "Removed "+stale.ID) || !strings.Contains(out, "without signaling PID") {
+		t.Fatalf("rm --stale output: %q", out)
+	}
+	if _, err := forward.Read(stale.ID); !os.IsNotExist(err) {
+		t.Fatalf("stale record survived rm --stale: %v", err)
+	}
+	if _, err := forward.Read(live.ID); err != nil {
+		t.Fatalf("live record removed by rm --stale: %v", err)
+	}
+	if _, err := forward.Read(stopped.ID); err != nil {
+		t.Fatalf("stopped record removed by rm --stale: %v", err)
+	}
+}
+
+func TestForwardDefaultsContinueOnErrorAndKeepAlive(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	cfgPath := filepath.Join(dir, "connections.toml")
+	if _, err := execute(t, "--config", cfgPath, "new", "demo", "--host", "127.0.0.1", "--user", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, "--config", cfgPath, "new", "custom", "--host", "127.0.0.1", "--user", "alice", "--keepalive", "15s"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify captureForwardOptions & default resolution via forwardCommand flags.
+	cmd := New()
+	fCmd, _, err := cmd.Find([]string{"forward"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := fCmd.Flags().GetBool("continue-on-error")
+	if err != nil || !v {
+		t.Fatalf("forward --continue-on-error default = %v, %v; want true", v, err)
+	}
+
+	// Verify connection keepalive is stored and used when resolving SSH options.
+	connDemo, err := (&app{configPath: cfgPath}).connection("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connCustom, err := (&app{configPath: cfgPath}).connection("custom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{configPath: cfgPath}
+	if got := a.effectiveKeepAlive(fCmd, connCustom); got != 15*time.Second {
+		t.Fatalf("effectiveKeepAlive(custom) = %v; want 15s", got)
+	}
+	if got := a.effectiveKeepAlive(fCmd, connDemo); got != 0 {
+		t.Fatalf("effectiveKeepAlive(demo) = %v; want 0", got)
 	}
 }

@@ -26,27 +26,28 @@ func (a *app) forwardCommand() *cobra.Command {
 		Use:     "forward NAME LISTEN_PORT_OR_ADDRESS [TARGET_PORT_OR_ADDRESS] [-L | -D | -R]",
 		Short:   "Forward TCP ports or run a SOCKS5 proxy through SSH",
 		Aliases: []string{"f"},
-		Long: `通过 SSH 转发 TCP 端口。
+		Long: `Forward TCP ports or run a SOCKS5 proxy over SSH.
 
-本地转发（-L，默认，类似 ssh -L）：ah forward NAME 本地监听端口 SSH服务器侧目标端口
-  NAME                     已保存的 SSH 连接名
-  LOCAL_PORT_OR_ADDRESS    本地监听端口或地址，例如 8080、0.0.0.0:8080
-  TARGET_PORT_OR_ADDRESS   SSH 服务器侧的目标端口或地址，例如 80、database.internal:5432
-例如 8080 80 表示：本地 127.0.0.1:8080 → SSH 服务器上的 127.0.0.1:80。
-目标端口是要访问的服务端口；SSH 登录端口使用连接配置中的 port。
-显式指定目标主机时，由 SSH 服务器访问该主机。
+Local forwarding (-L, default, similar to ssh -L):
+  ah forward NAME LOCAL TARGET
+  NAME    Saved SSH connection name
+  LOCAL   Local listen port or HOST:PORT (e.g. 8080, 0.0.0.0:8080)
+  TARGET  Target port or HOST:PORT reached from the SSH server (e.g. 80, db.internal:5432)
 
-动态转发（-D，类似 ssh -D）：ah forward NAME 本地监听端口 -D
-在本地起一个 SOCKS5 代理（无认证，仅 CONNECT），每个请求由 SSH 服务器连接目标，
-域名也由 SSH 服务器解析；浏览器需开启“通过 SOCKS 代理 DNS”（socks5h）才能访问内网域名。
-单个目标连不上只断开该请求，不结束代理。
+Dynamic SOCKS5 proxy (-D, similar to ssh -D):
+  ah forward NAME LOCAL -D
+  Starts a local unauthenticated SOCKS5 CONNECT proxy whose targets and DNS
+  names are resolved by the SSH server.
 
-远程转发（-R，类似 ssh -R）：ah forward NAME SSH服务器侧监听端口 本地目标端口
-让 SSH 服务器监听端口，连接转到本机（运行 ah 的机器）的目标。
-例如 9000 3000 -R 表示：SSH 服务器上的 127.0.0.1:9000 → 本机 127.0.0.1:3000。
-服务器侧监听非回环地址需要 sshd 开启 GatewayPorts，否则 sshd 仍只监听回环地址。
+Remote forwarding (-R, similar to ssh -R):
+  ah forward NAME REMOTE LOCAL_TARGET -R
+  Asks the SSH server to listen on REMOTE and forward connections to LOCAL_TARGET
+  reachable from this machine. Listening on non-loopback addresses on the server
+  requires GatewayPorts in sshd_config.
 
-地址省略 IP 时均默认 127.0.0.1。`,
+Bare ports default to 127.0.0.1 on both ends. By default, forwards use a 30s
+SSH keepalive (overridable per connection or with --keepalive) and keep
+listening after individual client/target failures (--continue-on-error=true).`,
 		Example: "  ah forward myserver 8080 80 -d\n  ah forward myserver 0.0.0.0:8080 80 -d\n  ah forward myserver 1080 -D -d\n  ah forward myserver 9000 3000 -R -d",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if dynamic {
@@ -84,7 +85,8 @@ func (a *app) forwardCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err = a.connection(args[0]); err != nil {
+			conn, err := a.connection(args[0])
+			if err != nil {
 				return err
 			}
 			var record forward.Record
@@ -114,6 +116,13 @@ func (a *app) forwardCommand() *cobra.Command {
 				}
 				if err = a.captureForwardOptions(&record); err != nil {
 					return err
+				}
+				if !cmd.Flags().Changed("keepalive") {
+					if d, kerr := conn.KeepAliveDuration(); kerr == nil && d > 0 {
+						record.KeepAlive = d
+					} else {
+						record.KeepAlive = 30 * time.Second
+					}
 				}
 				if err = record.Save(); err != nil {
 					return err
@@ -149,13 +158,33 @@ func (a *app) forwardCommand() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("local", "dynamic", "remote")
 	cmd.Flags().StringVar(&worker, "forward-worker", "", "internal worker ID")
 	_ = cmd.Flags().MarkHidden("forward-worker")
-	var jsonOutput bool
+	var jsonOutput, runningOnly bool
+	var statusFilter string
 	ls := &cobra.Command{
 		Use: "ls", Short: "List forwards and their status", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if runningOnly {
+				statusFilter = "running"
+			}
+			if statusFilter != "" {
+				switch statusFilter {
+				case "running", "starting", "stopped", "failed", "stale", "corrupt":
+				default:
+					return fmt.Errorf("invalid forward status %q (expected running, starting, stopped, failed, stale or corrupt)", statusFilter)
+				}
+			}
 			records, err := forward.List(cmd.Context())
 			if err != nil {
 				return err
+			}
+			if statusFilter != "" {
+				filtered := make([]forward.Record, 0, len(records))
+				for _, r := range records {
+					if r.Status == statusFilter {
+						filtered = append(filtered, r)
+					}
+				}
+				records = filtered
 			}
 			if jsonOutput {
 				return writeForwardJSON(cmd.OutOrStdout(), records)
@@ -180,8 +209,11 @@ func (a *app) forwardCommand() *cobra.Command {
 		},
 	}
 	ls.Flags().BoolVar(&jsonOutput, "json", false, "print records as JSON")
+	ls.Flags().StringVar(&statusFilter, "status", "", "filter by status: running, starting, stopped, failed, stale, corrupt")
+	ls.Flags().BoolVar(&runningOnly, "running", false, "show only running forwards (equivalent to --status running)")
+	ls.MarkFlagsMutuallyExclusive("status", "running")
 	cmd.AddCommand(ls, &cobra.Command{
-		Use: "kill ID", Short: "Stop a forward by ID", Args: cobra.ExactArgs(1),
+		Use: "kill ID", Short: "Stop a forward by ID", Args: cobra.ExactArgs(1), ValidArgsFunction: a.completeForwardIDs("running", "starting"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout+5*time.Second)
 			defer cancel()
@@ -222,7 +254,7 @@ func (a *app) forwardCommand() *cobra.Command {
 
 func (a *app) bindForwardRunFlags(target *cobra.Command) {
 	target.Flags().BoolVar(&a.forwardReconnect, "reconnect", false, "reconnect after a running forward fails, with exponential backoff")
-	target.Flags().BoolVar(&a.forwardContinue, "continue-on-error", false, "keep listening after an individual target or relay failure")
+	target.Flags().BoolVar(&a.forwardContinue, "continue-on-error", true, "keep listening after an individual target or relay failure (use --continue-on-error=false to exit on first error)")
 }
 
 func sanitizeSingleLine(s string) string {
@@ -265,7 +297,9 @@ func (a *app) runForward(cmd *cobra.Command, record forward.Record, ready *os.Fi
 			}
 		}()
 	}
-	client, err := a.dialSSH(ctx, cmd, record.Name, connection, a.connectionSSHOptions(cmd, record.Name, connection, true), true)
+	opts := a.connectionSSHOptions(cmd, record.Name, connection, true)
+	opts.KeepAlive = record.KeepAlive
+	client, err := a.dialSSH(ctx, cmd, record.Name, connection, opts, true)
 	if err != nil {
 		return err
 	}

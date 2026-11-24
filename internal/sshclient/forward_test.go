@@ -653,3 +653,68 @@ func TestForwardDynamicCancelUnblocksIdleClient(t *testing.T) {
 		t.Fatal("ForwardDynamic blocked on idle SOCKS client after cancel")
 	}
 }
+
+func TestForwardLocalSurvivesClientResetOnHalfClose(t *testing.T) {
+	serverRead := make(chan struct{})
+	f := testutil.StartForwardSSH(t, func(ch ssh.NewChannel) {
+		channel, requests, err := ch.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = channel.Close() }()
+		go ssh.DiscardRequests(requests)
+		buf := make([]byte, 4)
+		_, _ = io.ReadFull(channel, buf)
+		if string(buf) == "ping" {
+			// Wait until the client closes its TCP socket before closing the SSH
+			// write half, so local.CloseWrite() hits ENOTCONN.
+			<-serverRead
+			_ = channel.CloseWrite()
+			return
+		}
+		_, _ = io.Copy(io.Discard, channel)
+		_, _ = channel.Write([]byte("pong"))
+		_ = channel.CloseWrite()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c, err := sshclient.Dial(ctx, f.Connection, sshclient.Options{KnownHosts: f.KnownHosts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.ForwardLocal(ctx, listener, "target.internal:80") }()
+
+	// Client sends data and closes before the server closes its write half.
+	first, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = first.Write([]byte("ping"))
+	_ = first.Close()
+	close(serverRead)
+	time.Sleep(50 * time.Millisecond)
+
+	// Listener must still be serving subsequent clients.
+	second, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatalf("listener died after client half-close: %v", err)
+	}
+	defer func() { _ = second.Close() }()
+	_ = second.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := second.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	_ = second.(*net.TCPConn).CloseWrite()
+	reply, err := io.ReadAll(second)
+	if err != nil || string(reply) != "pong" {
+		t.Fatalf("second client failed: %q %v", reply, err)
+	}
+	cancel()
+	<-done
+}

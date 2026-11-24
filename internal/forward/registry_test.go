@@ -268,3 +268,75 @@ func TestListContextCancelAndStartingStaleAndStopRace(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIsStaleAndRemoveStale(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	live, err := Allocate(Local, "live", "127.0.0.1:8080", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := Register(live, func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reg.Close(nil) })
+
+	if stale, err := IsStale(context.Background(), reg.Record); err != nil || stale {
+		t.Fatalf("live record stale = %v, %v", stale, err)
+	}
+	if err := RemoveStale(context.Background(), live.ID); err == nil {
+		t.Fatal("RemoveStale deleted live record")
+	}
+
+	stopped, err := Allocate(Local, "stopped", "127.0.0.1:8081", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped.Status = "stopped"
+	if err := stopped.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := IsStale(context.Background(), stopped); err != nil || stale {
+		t.Fatalf("stopped record stale = %v, %v", stale, err)
+	}
+	if err := RemoveStale(context.Background(), stopped.ID); err == nil {
+		t.Fatal("RemoveStale deleted stopped record")
+	}
+
+	dead, err := Allocate(Local, "dead", "127.0.0.1:8082", "127.0.0.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead.Status = "running"
+	dead.Socket = filepath.Join(dir, "missing.sock")
+	if err := dead.Save(); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := recordPath(dead.ID)
+	logPath := strings.TrimSuffix(p, ".json") + ".log"
+	if err := os.WriteFile(logPath, []byte("log"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := IsStale(context.Background(), dead); err != nil || !stale {
+		t.Fatalf("dead record stale = %v, %v", stale, err)
+	}
+	lock, err := Lock(context.Background(), dead.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := RemoveStale(context.Background(), dead.ID); err != nil {
+		t.Fatalf("RemoveStale failed: %v", err)
+	}
+	for _, path := range []string{p, logPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s survived RemoveStale: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(p + ".lock"); err != nil {
+		t.Fatalf("lock file removed: %v", err)
+	}
+}

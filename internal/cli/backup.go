@@ -17,9 +17,10 @@ import (
 func (a *app) backupCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "backup", Aliases: []string{"b"}, Short: "List and restore backups made by cp --backup",
-		Long: `列出和还原 cp --backup 留下的备份。
+		Long: `List and restore backups created by cp --backup.
 
-备份与原文件同目录，名为 bak.NAME.bak-UTC时间戳。TARGET 写原文件路径（NAME:PATH 为远端，否则为本地），不是备份文件本身。`,
+Backups are stored alongside the original file as bak.NAME.bak-TIMESTAMP (UTC).
+TARGET is the original file path (NAME:PATH for remote, otherwise local), not the backup file itself.`,
 	}
 	completeTarget := func(cmd *cobra.Command, args []string, partial string) ([]string, cobra.ShellCompDirective) {
 		if len(args) > 0 {
@@ -59,11 +60,10 @@ func (a *app) backupCommand() *cobra.Command {
 	restore := &cobra.Command{
 		Use:   "restore TARGET [VERSION]",
 		Short: "Restore a file from a backup (default: the newest)",
-		Long: `把 TARGET 还原为某个备份的内容，原子替换。
+		Long: `Atomically replace TARGET with the contents of a saved backup.
 
-VERSION 省略时用最新备份；可写 backup ls 中的序号（1 为最新），或至少含 8 位日期的时间戳前缀（如 20260930、20260930T1234），也可写完整备份文件名。
-还原前先把当前文件备份一份，所以还原本身也能再还原回来；备份数同 cp --backup 受 --backup-keep 限制，被还原的那份不会被清理。
-当前内容已与所选备份相同时不做任何改动。`,
+If VERSION is omitted, the newest backup is used. VERSION can be a 1-based index from backup ls, a timestamp prefix of at least 8 digits (e.g. 20260930 or 20260930T1234), or the full backup filename.
+Before replacing TARGET, the current file is backed up using --backup-keep (the backup being restored is excluded from pruning). If TARGET already matches the selected backup, nothing is changed.`,
 		Args:              cobra.RangeArgs(1, 2),
 		ValidArgsFunction: completeTarget,
 		RunE: func(cmd *cobra.Command, args []string) error {

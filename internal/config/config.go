@@ -41,6 +41,7 @@ type Connection struct {
 	// Shell is the interactive login shell to start; empty picks the remote
 	// platform default and DefaultShell keeps the server's own choice.
 	Shell        string   `toml:"shell,omitempty"`
+	KeepAlive    string   `toml:"keepalive,omitempty"`
 	Host         string   `toml:"host"`
 	Port         int      `toml:"port"`
 	User         string   `toml:"user"`
@@ -163,6 +164,9 @@ func (c Connection) Validate() error {
 	if err := ValidateShell(c.Shell); err != nil {
 		return err
 	}
+	if _, err := c.KeepAliveDuration(); err != nil {
+		return err
+	}
 	if c.Term != "" && strings.ContainsFunc(c.Term, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
 		return fmt.Errorf("term must be a terminfo name without whitespace or control characters")
 	}
@@ -229,6 +233,24 @@ func ValidateShell(shell string) error {
 		return fmt.Errorf("shell must be a shell name or path using only letters, digits and : . _ + - / \\")
 	}
 	return nil
+}
+
+// KeepAliveDuration parses the optional per-connection keepalive interval.
+func (c Connection) KeepAliveDuration() (time.Duration, error) {
+	if c.KeepAlive == "" {
+		return 0, nil
+	}
+	if strings.ContainsFunc(c.KeepAlive, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return 0, fmt.Errorf("keepalive must be a duration without whitespace or control characters")
+	}
+	d, err := time.ParseDuration(c.KeepAlive)
+	if err != nil {
+		return 0, fmt.Errorf("invalid keepalive %q: %w", c.KeepAlive, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("keepalive must not be negative")
+	}
+	return d, nil
 }
 
 type Store struct{ Path string }

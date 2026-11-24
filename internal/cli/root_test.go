@@ -78,6 +78,61 @@ func TestConnectionCRUD(t *testing.T) {
 	}
 }
 
+func TestEditClearFlagsAndKeepAlive(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "connections.toml")
+	run := func(args ...string) (string, error) { return execute(t, append([]string{"--config", p}, args...)...) }
+	if _, err := run("new", "jumpbox", "--host", "jump.example.com", "--user", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run("new", "app",
+		"--host", "app.example.com", "--user", "bob",
+		"--jump", "jumpbox", "--shell", "zsh", "--keepalive", "30s",
+		"--host-key-alias", "app-alias", "--identity-file", "/tmp/id",
+		"--sftp-server", "/usr/lib/sftp-server", "--note", "hello",
+	); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run("inspect", "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"keepalive": "30s"`) {
+		t.Fatalf("inspect missing keepalive: %s", out)
+	}
+
+	// Mutually exclusive checks.
+	for _, pair := range [][2]string{
+		{"--jump", "--clear-jump"},
+		{"--shell", "--clear-shell"},
+		{"--keepalive", "--clear-keepalive"},
+		{"--proxy-command", "--clear-proxy-command"},
+		{"--host-key-alias", "--clear-host-key-alias"},
+		{"--identity-file", "--clear-identity-file"},
+		{"--sftp-server", "--clear-sftp-server"},
+		{"--note", "--clear-note"},
+	} {
+		if _, err := run("edit", "app", pair[0], "val", pair[1]); err == nil {
+			t.Fatalf("accepted %v together", pair)
+		}
+	}
+
+	if _, err := run("edit", "app",
+		"--clear-jump", "--clear-shell", "--clear-keepalive",
+		"--clear-host-key-alias", "--clear-identity-file",
+		"--clear-sftp-server", "--clear-note",
+	); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Store{Path: p}.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := got["app"]
+	if c.Jump != "" || c.Shell != "" || c.KeepAlive != "" || c.HostKeyAlias != "" || c.IdentityFile != "" || c.SFTPServer != "" || c.Note != "" {
+		t.Fatalf("clear flags did not clear fields: %+v", c)
+	}
+}
+
 func TestCPAndBothRemoteCompletionPositions(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
 	a, b := testutil.StartSSH(t), testutil.StartSSH(t)

@@ -293,3 +293,26 @@ func TestProxyCommandValidation(t *testing.T) {
 		t.Fatalf("direct connection identity %q", got)
 	}
 }
+
+func TestKeepAliveValidation(t *testing.T) {
+	base := Connection{Host: "127.0.0.1", Port: 22, User: "alice"}
+	for _, valid := range []string{"", "0", "0s", "30s", "1m30s"} {
+		c := base
+		c.KeepAlive = valid
+		if err := c.Validate(); err != nil {
+			t.Fatalf("valid keepalive %q rejected: %v", valid, err)
+		}
+	}
+	c := base
+	c.KeepAlive = "30s"
+	if d, err := c.KeepAliveDuration(); err != nil || d != 30*time.Second {
+		t.Fatalf("KeepAliveDuration = %v, %v; want 30s", d, err)
+	}
+	for _, invalid := range []string{"-5s", "bad", " 30s", "30s\n"} {
+		c := base
+		c.KeepAlive = invalid
+		if c.Validate() == nil {
+			t.Fatalf("invalid keepalive %q accepted", invalid)
+		}
+	}
+}

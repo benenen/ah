@@ -49,9 +49,7 @@ func (a *app) startForwardDaemon(cmd *cobra.Command, record forward.Record) erro
 	if record.Reconnect {
 		args = append(args, "--reconnect")
 	}
-	if record.ContinueOnError {
-		args = append(args, "--continue-on-error")
-	}
+	args = append(args, fmt.Sprintf("--continue-on-error=%t", record.ContinueOnError))
 	args = append(args, "--forward-worker", record.ID)
 	read, write, err := os.Pipe()
 	if err != nil {

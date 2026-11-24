@@ -46,7 +46,9 @@ func (a *app) reopenForward(cmd *cobra.Command, record forward.Record) (*sshclie
 	if err != nil {
 		return nil, nil, err
 	}
-	client, err := a.dialSSH(cmd.Context(), cmd, record.Name, c, a.connectionSSHOptions(cmd, record.Name, c, false), false)
+	opts := a.connectionSSHOptions(cmd, record.Name, c, false)
+	opts.KeepAlive = record.KeepAlive
+	client, err := a.dialSSH(cmd.Context(), cmd, record.Name, c, opts, false)
 	if err != nil {
 		return nil, nil, err
 	}

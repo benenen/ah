@@ -284,6 +284,8 @@ func TestCopyLocalEndpoints(t *testing.T) {
 			}
 			if _, err := Copy(context.Background(), src, dst, dir, out, Options{Force: true}); err == nil {
 				t.Fatal("accepted directory")
+			} else if !strings.Contains(err.Error(), "-r/--recursive") {
+				t.Fatalf("expected -r/--recursive hint for directory, got: %v", err)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()

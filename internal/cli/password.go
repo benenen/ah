@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/benenen/ah/internal/config"
 	"github.com/benenen/ah/internal/credentials"
@@ -107,10 +108,24 @@ func (a *app) promptStoredPassword(cmd *cobra.Command, name, prompt string) (str
 	return store.Encrypt(name, secret)
 }
 
+func (a *app) effectiveKeepAlive(cmd *cobra.Command, c config.Connection) time.Duration {
+	if cmd != nil && cmd.Flags().Changed("keepalive") {
+		return a.keepAlive
+	}
+	if a.keepAlive > 0 {
+		return a.keepAlive
+	}
+	if d, err := c.KeepAliveDuration(); err == nil && d > 0 {
+		return d
+	}
+	return 0
+}
+
 func (a *app) connectionSSHOptions(cmd *cobra.Command, name string, c config.Connection, interactive bool) sshclient.Options {
-	opts := sshclient.Options{KeepAlive: a.keepAlive, KnownHosts: a.knownHosts, Timeout: a.timeout}
+	opts := sshclient.Options{KeepAlive: a.effectiveKeepAlive(cmd, c), KnownHosts: a.knownHosts, Timeout: a.timeout}
 	if interactive {
 		opts = a.sshOptions(cmd)
+		opts.KeepAlive = a.effectiveKeepAlive(cmd, c)
 	}
 	opts.Term = a.term
 	opts.Shell = a.shell

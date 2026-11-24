@@ -40,6 +40,7 @@ type inspectedConnection struct {
 	Term                   string           `json:"term"`
 	EffectiveTerm          string           `json:"effective_term"`
 	Shell                  string           `json:"shell"`
+	KeepAlive              string           `json:"keepalive"`
 	Tags                   []string         `json:"tags"`
 	Note                   string           `json:"note"`
 }
@@ -102,7 +103,7 @@ func (a *app) inspectCommand() *cobra.Command {
 				IdentityFile: c.IdentityFile, PasswordConfigured: c.Password != "", Proxies: proxies,
 				ProxyCommand: c.ProxyCommand, HostKeyAlias: c.HostKeyAlias, HostKeyIdentity: identity,
 				Sudo: c.Sudo, SudoPasswordConfigured: c.SudoPassword != "", SudoShell: c.SudoShell,
-				SFTPServer: c.SFTPServer, Term: c.Term, EffectiveTerm: terminal, Shell: shell,
+				SFTPServer: c.SFTPServer, Term: c.Term, EffectiveTerm: terminal, Shell: shell, KeepAlive: c.KeepAlive,
 				Tags: append([]string{}, c.Tags...), Note: c.Note,
 			}
 			enc := json.NewEncoder(cmd.OutOrStdout())

@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,9 @@ func TestCopyRejectsFIFOWithoutOpeningIt(t *testing.T) {
 	<-released
 	if err == nil {
 		t.Fatal("accepted FIFO")
+	}
+	if !strings.Contains(err.Error(), "source must be a regular file") {
+		t.Fatalf("unexpected FIFO error: %v", err)
 	}
 	if elapsed >= 200*time.Millisecond {
 		t.Fatalf("opened FIFO and waited for writer: %v", elapsed)

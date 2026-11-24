@@ -84,6 +84,7 @@ func connectionFlags(cmd *cobra.Command, c *config.Connection) {
 	cmd.Flags().StringVar(&c.SFTPServer, "sftp-server", "", "absolute remote SFTP server path for sudo (empty to detect common paths)")
 	cmd.Flags().StringVar(&c.SudoShell, "sudo-shell", "", "login shell for an escalated interactive session (default bash, falls back to /bin/sh)")
 	cmd.Flags().StringVar(&c.Shell, "shell", "", "interactive shell such as pwsh, zsh or bash (empty uses the platform default: cmd.exe on Windows, zsh on macOS, bash elsewhere; \"default\" uses the server's login shell)")
+	cmd.Flags().StringVar(&c.KeepAlive, "keepalive", "", "default SSH keepalive interval such as 30s (empty or 0 disables)")
 	cmd.Flags().StringVar(&c.Term, "term", c.Term, "TERM to send for interactive sessions (empty to use $TERM)")
 	cmd.Flags().StringArrayVar(&c.Proxies, "proxy", nil, "SOCKS5 HOST:PORT or socks5://HOST:PORT; repeat in hop order")
 	cmd.Flags().StringVar(&c.ProxyCommand, "proxy-command", "", "local command carrying the SSH stream on stdin/stdout, like OpenSSH ProxyCommand; %h, %p, %r expand (empty clears it)")
@@ -160,6 +161,7 @@ func (a *app) newCommand() *cobra.Command {
 func (a *app) editCommand() *cobra.Command {
 	var changes config.Connection
 	var password, clearPassword, clearProxy, sudoPassword, clearSudoPassword, clearSudoShell, clearTerm, noSudo, clearTags bool
+	var clearJump, clearShell, clearProxyCommand, clearHostKeyAlias, clearIdentityFile, clearSFTPServer, clearNote, clearKeepAlive bool
 	var addTags, removeTagNames []string
 	cmd := &cobra.Command{Use: "edit NAME [flags]", Aliases: []string{"e"}, Short: "Update only the supplied connection fields", Args: cobra.ExactArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := a.store()
@@ -195,6 +197,9 @@ func (a *app) editCommand() *cobra.Command {
 			if cmd.Flags().Changed("jump") {
 				c.Jump = changes.Jump
 			}
+			if clearJump {
+				c.Jump = ""
+			}
 			if cmd.Flags().Changed("sudo") {
 				c.Sudo = changes.Sudo
 			}
@@ -203,6 +208,9 @@ func (a *app) editCommand() *cobra.Command {
 			}
 			if cmd.Flags().Changed("sftp-server") {
 				c.SFTPServer = changes.SFTPServer
+			}
+			if clearSFTPServer {
+				c.SFTPServer = ""
 			}
 			if cmd.Flags().Changed("sudo-shell") {
 				c.SudoShell = changes.SudoShell
@@ -218,6 +226,15 @@ func (a *app) editCommand() *cobra.Command {
 			}
 			if cmd.Flags().Changed("shell") {
 				c.Shell = changes.Shell
+			}
+			if clearShell {
+				c.Shell = ""
+			}
+			if cmd.Flags().Changed("keepalive") {
+				c.KeepAlive = changes.KeepAlive
+			}
+			if clearKeepAlive {
+				c.KeepAlive = ""
 			}
 			if sudoPassword {
 				c.SudoPassword = encryptedSudo
@@ -236,8 +253,14 @@ func (a *app) editCommand() *cobra.Command {
 			if cmd.Flags().Changed("proxy-command") {
 				c.ProxyCommand = changes.ProxyCommand
 			}
+			if clearProxyCommand {
+				c.ProxyCommand = ""
+			}
 			if cmd.Flags().Changed("host-key-alias") {
 				c.HostKeyAlias = changes.HostKeyAlias
+			}
+			if clearHostKeyAlias {
+				c.HostKeyAlias = ""
 			}
 			if cmd.Flags().Changed("host") {
 				c.Host = changes.Host
@@ -250,6 +273,9 @@ func (a *app) editCommand() *cobra.Command {
 			}
 			if cmd.Flags().Changed("identity-file") {
 				c.IdentityFile = changes.IdentityFile
+			}
+			if clearIdentityFile {
+				c.IdentityFile = ""
 			}
 			if password {
 				c.Password = encrypted
@@ -273,6 +299,9 @@ func (a *app) editCommand() *cobra.Command {
 			c.Tags = normalizeTags(append(c.Tags, addTags...))
 			if cmd.Flags().Changed("note") {
 				c.Note = changes.Note
+			}
+			if clearNote {
+				c.Note = ""
 			}
 			if err := c.Validate(); err != nil {
 				return err
@@ -311,6 +340,22 @@ func (a *app) editCommand() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("sudo-shell", "clear-sudo-shell")
 	cmd.Flags().BoolVar(&clearTerm, "clear-term", false, "remove the saved TERM and fall back to $TERM")
 	cmd.MarkFlagsMutuallyExclusive("term", "clear-term")
+	cmd.Flags().BoolVar(&clearJump, "clear-jump", false, "remove the SSH jump connection")
+	cmd.MarkFlagsMutuallyExclusive("jump", "clear-jump")
+	cmd.Flags().BoolVar(&clearShell, "clear-shell", false, "remove the saved interactive shell")
+	cmd.MarkFlagsMutuallyExclusive("shell", "clear-shell")
+	cmd.Flags().BoolVar(&clearKeepAlive, "clear-keepalive", false, "remove the saved keepalive interval")
+	cmd.MarkFlagsMutuallyExclusive("keepalive", "clear-keepalive")
+	cmd.Flags().BoolVar(&clearProxyCommand, "clear-proxy-command", false, "remove the saved proxy command")
+	cmd.MarkFlagsMutuallyExclusive("proxy-command", "clear-proxy-command")
+	cmd.Flags().BoolVar(&clearHostKeyAlias, "clear-host-key-alias", false, "remove the saved host key alias")
+	cmd.MarkFlagsMutuallyExclusive("host-key-alias", "clear-host-key-alias")
+	cmd.Flags().BoolVar(&clearIdentityFile, "clear-identity-file", false, "remove the saved private key path")
+	cmd.MarkFlagsMutuallyExclusive("identity-file", "clear-identity-file")
+	cmd.Flags().BoolVar(&clearSFTPServer, "clear-sftp-server", false, "remove the saved SFTP server path")
+	cmd.MarkFlagsMutuallyExclusive("sftp-server", "clear-sftp-server")
+	cmd.Flags().BoolVar(&clearNote, "clear-note", false, "remove the saved note")
+	cmd.MarkFlagsMutuallyExclusive("note", "clear-note")
 	cmd.Flags().StringSliceVar(&addTags, "add-tag", nil, "add tags, keeping existing ones; repeat or comma-separate")
 	cmd.Flags().StringSliceVar(&removeTagNames, "remove-tag", nil, "remove tags (case-insensitive); repeat or comma-separate")
 	cmd.Flags().BoolVar(&clearTags, "clear-tags", false, "remove all tags")

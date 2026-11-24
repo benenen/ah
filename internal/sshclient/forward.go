@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"syscall"
 )
 
 // ForwardOptions optionally isolates individual client errors. A blocked SSH
@@ -160,7 +161,9 @@ func relayForward(ctx context.Context, a, b net.Conn) error {
 		_, err := io.Copy(dst, src)
 		if err == nil {
 			if half, ok := dst.(interface{ CloseWrite() error }); ok {
-				err = half.CloseWrite()
+				if cwErr := half.CloseWrite(); cwErr != nil && !isBenignCloseWrite(cwErr) {
+					err = cwErr
+				}
 			}
 		}
 		if err != nil {
@@ -172,4 +175,8 @@ func relayForward(ctx context.Context, a, b net.Conn) error {
 	go copyHalf(a, b)
 	go copyHalf(b, a)
 	return errors.Join(<-results, <-results)
+}
+
+func isBenignCloseWrite(err error) bool {
+	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, syscall.ENOTCONN)
 }

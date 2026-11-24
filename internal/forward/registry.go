@@ -102,6 +102,39 @@ func RemoveCorrupt(id string) error {
 	return removeFiles(p)
 }
 
+// IsStale reports whether a running or starting record has an unreachable
+// control socket while ctx remains active.
+func IsStale(ctx context.Context, r Record) (bool, error) {
+	if r.Status != "running" && !(r.Status == "starting" && r.Socket != "") {
+		return false, nil
+	}
+	if err := control(ctx, r, "ping"); err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// RemoveStale deletes a stale record and its log without signaling its PID.
+// The caller must hold Lock.
+func RemoveStale(ctx context.Context, id string) error {
+	r, err := Read(id)
+	if err != nil {
+		return err
+	}
+	stale, err := IsStale(ctx, r)
+	if err != nil {
+		return err
+	}
+	if !stale {
+		return fmt.Errorf("forward %s is %s, not stale", id, r.Status)
+	}
+	p, _ := recordPath(id)
+	return removeFiles(p)
+}
+
 func removeFiles(p string) error {
 	if err := os.Remove(strings.TrimSuffix(p, ".json") + ".log"); err != nil && !os.IsNotExist(err) {
 		return err

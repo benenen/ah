@@ -77,6 +77,9 @@ func Copy(ctx context.Context, src, dst *sftp.Client, source, target string, opt
 	if statErr != nil {
 		return 0, fmt.Errorf("stat source: %w", statErr)
 	}
+	if beforeOpen.IsDir() {
+		return 0, fmt.Errorf("source is a directory (use -r/--recursive to copy directories): %s", source)
+	}
 	if !beforeOpen.Mode().IsRegular() {
 		return 0, fmt.Errorf("source must be a regular file: %s", source)
 	}
@@ -189,6 +192,9 @@ func copyOrSkip(ctx context.Context, sourceFS, targetFS filesystem, source, targ
 	info, err := in.Stat()
 	if err != nil {
 		return 0, fmt.Errorf("stat source: %w", err)
+	}
+	if info.IsDir() {
+		return 0, fmt.Errorf("source is a directory (use -r/--recursive to copy directories): %s", source)
 	}
 	if !info.Mode().IsRegular() {
 		return 0, fmt.Errorf("source must be a regular file: %s", source)
