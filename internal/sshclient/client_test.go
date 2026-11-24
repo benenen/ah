@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -372,5 +373,40 @@ func TestDialRejectsInvalidOptionShell(t *testing.T) {
 	c := config.Connection{Host: "127.0.0.1", Port: 22, User: "tester"}
 	if _, err := sshclient.Dial(context.Background(), c, sshclient.Options{Shell: "bash;id"}); err == nil {
 		t.Fatal("Dial accepted invalid Options.Shell")
+	}
+}
+
+func TestDialTimeoutErrorDescribesStageAndHint(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err == nil {
+			accepted <- conn
+		}
+	}()
+	t.Cleanup(func() {
+		select {
+		case c := <-accepted:
+			_ = c.Close()
+		default:
+		}
+	})
+
+	addr := ln.Addr().(*net.TCPAddr)
+	c := config.Connection{Host: "127.0.0.1", Port: addr.Port, User: "tester"}
+	_, err = sshclient.Dial(context.Background(), c, sshclient.Options{Timeout: 80 * time.Millisecond})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got: %v", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"SSH handshake", "timed out after", "--timeout"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("timeout error %q missing %q", msg, want)
+		}
 	}
 }

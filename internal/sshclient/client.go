@@ -177,6 +177,9 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 	}
 	report(transportStage, err)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return nil, fmt.Errorf("connect %s (%s) timed out after %s (increase --timeout): %w", address, transportStage, opts.Timeout, err)
+		}
 		return nil, fmt.Errorf("connect %s: %w", address, err)
 	}
 	if identity != address {
@@ -212,16 +215,31 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 	} else {
 		report("authentication", nil)
 	}
+	handshakeStage := "SSH handshake"
+	if verified {
+		handshakeStage = "SSH authentication"
+	} else if keySeen {
+		handshakeStage = "SSH host key verification"
+	}
 	if err != nil {
 		stop()
 		conn.Close()
+		var proxyDetail string
 		if proxyCommand != nil {
-			if detail := proxyCommand.diagnostics(); detail != "" {
-				err = fmt.Errorf("%w (proxy command stderr: %s)", err, detail)
-			}
+			proxyDetail = proxyCommand.diagnostics()
 		}
 		if cause := context.Cause(handshakeCtx); cause != nil {
+			if errors.Is(cause, context.DeadlineExceeded) && ctx.Err() == nil {
+				timeoutErr := fmt.Errorf("%s %s timed out after %s (increase --timeout): %w", handshakeStage, address, opts.Timeout, cause)
+				if proxyDetail != "" {
+					timeoutErr = fmt.Errorf("%w (proxy command stderr: %s)", timeoutErr, proxyDetail)
+				}
+				return nil, timeoutErr
+			}
 			return nil, cause
+		}
+		if proxyDetail != "" {
+			err = fmt.Errorf("%w (proxy command stderr: %s)", err, proxyDetail)
 		}
 		return nil, fmt.Errorf("SSH handshake %s: %w", address, err)
 	}
@@ -229,6 +247,9 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 		stop()
 		sc.Close()
 		if cause := context.Cause(handshakeCtx); cause != nil {
+			if errors.Is(cause, context.DeadlineExceeded) && ctx.Err() == nil {
+				return nil, fmt.Errorf("%s %s timed out after %s (increase --timeout): %w", handshakeStage, address, opts.Timeout, cause)
+			}
 			return nil, cause
 		}
 		return nil, context.Canceled
