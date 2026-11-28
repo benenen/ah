@@ -49,6 +49,12 @@ func (a *app) startForwardDaemon(cmd *cobra.Command, record forward.Record) erro
 	if record.Reconnect {
 		args = append(args, "--reconnect")
 	}
+	if record.Alias != "" {
+		args = append(args, "--alias", record.Alias)
+	}
+	if record.Group != "" {
+		args = append(args, "--group", record.Group)
+	}
 	args = append(args, fmt.Sprintf("--continue-on-error=%t", record.ContinueOnError))
 	args = append(args, "--forward-worker", record.ID)
 	read, write, err := os.Pipe()
@@ -57,11 +63,11 @@ func (a *app) startForwardDaemon(cmd *cobra.Command, record forward.Record) erro
 	}
 	defer func() { _ = read.Close() }()
 	defer func() { _ = write.Close() }()
-	root, err := os.UserConfigDir()
+	logPath, err := forward.LogPath(record.ID)
 	if err != nil {
 		return err
 	}
-	log, err := os.OpenFile(filepath.Join(root, "ah", "forwards", record.ID+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}

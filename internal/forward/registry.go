@@ -30,6 +30,8 @@ type Record struct {
 	Reconnect       bool `json:",omitempty"`
 	ContinueOnError bool `json:",omitempty"`
 	ID              string
+	Alias           string `json:",omitempty"`
+	Group           string `json:",omitempty"`
 	Type            string `json:",omitempty"`
 	Name            string
 	Listen          string
@@ -157,6 +159,49 @@ func recordPath(id string) (string, error) {
 	}
 	dir, err := directory()
 	return filepath.Join(dir, id+".json"), err
+}
+
+// LogPath returns the log file path for a forward ID.
+func LogPath(id string) (string, error) {
+	p, err := recordPath(id)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(p, ".json") + ".log", nil
+}
+
+// ResolveID resolves either a 16-hex forward ID or a saved record alias to an ID.
+func ResolveID(ctx context.Context, idOrAlias string) (string, error) {
+	if _, err := recordPath(idOrAlias); err == nil {
+		return idOrAlias, nil
+	}
+	records, err := List(ctx)
+	if err != nil {
+		return "", err
+	}
+	var active, inactive []Record
+	for _, r := range records {
+		if r.Status == "corrupt" || r.Alias != idOrAlias {
+			continue
+		}
+		if r.Status == "running" || r.Status == "starting" {
+			active = append(active, r)
+		} else {
+			inactive = append(inactive, r)
+		}
+	}
+	switch {
+	case len(active) == 1:
+		return active[0].ID, nil
+	case len(active) > 1:
+		return "", fmt.Errorf("forward alias %q matches multiple active forwards; specify an ID", idOrAlias)
+	case len(inactive) == 1:
+		return inactive[0].ID, nil
+	case len(inactive) > 1:
+		return "", fmt.Errorf("forward alias %q matches multiple records; specify an ID", idOrAlias)
+	default:
+		return "", fmt.Errorf("forward %q not found", idOrAlias)
+	}
 }
 
 // Allocate reserves a unique ID before a process is started.

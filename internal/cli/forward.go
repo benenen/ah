@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/benenen/ah/internal/config"
 	"github.com/benenen/ah/internal/forward"
 	"github.com/benenen/ah/internal/sshclient"
 	"github.com/spf13/cobra"
@@ -21,7 +22,7 @@ import (
 
 func (a *app) forwardCommand() *cobra.Command {
 	var daemon, local, dynamic, remote bool
-	var worker string
+	var worker, alias, group string
 	cmd := &cobra.Command{
 		Use:     "forward NAME LISTEN_PORT_OR_ADDRESS [TARGET_PORT_OR_ADDRESS] [-L | -D | -R]",
 		Short:   "Forward TCP ports or run a SOCKS5 proxy through SSH",
@@ -89,9 +90,23 @@ listening after individual client/target failures (--continue-on-error=true).`,
 			if err != nil {
 				return err
 			}
+			if alias != "" {
+				if err := config.ValidateName(alias); err != nil {
+					return fmt.Errorf("invalid --alias: %w", err)
+				}
+			}
+			if group != "" {
+				if err := config.ValidateTag(group); err != nil {
+					return fmt.Errorf("invalid --group: %w", err)
+				}
+			}
 			var record forward.Record
 			if worker == "" {
 				record, err = forward.Allocate(kind, args[0], listen, target)
+				if err == nil {
+					record.Alias = alias
+					record.Group = group
+				}
 			} else {
 				record, err = forward.Read(worker)
 				if err == nil && (record.Status != "starting" || record.Kind() != kind || record.Name != args[0] || record.Listen != listen || record.Target != target) {
@@ -156,10 +171,12 @@ listening after individual client/target failures (--continue-on-error=true).`,
 	cmd.Flags().BoolVarP(&remote, "remote", "R", false, "listen on the SSH server and forward connections to a local target")
 	cmd.Flags().BoolVarP(&local, "local", "L", false, "listen locally and forward connections to a target the SSH server dials (default)")
 	cmd.MarkFlagsMutuallyExclusive("local", "dynamic", "remote")
+	cmd.Flags().StringVar(&alias, "alias", "", "optional alias for this forward")
+	cmd.Flags().StringVar(&group, "group", "", "optional group name for this forward")
 	cmd.Flags().StringVar(&worker, "forward-worker", "", "internal worker ID")
 	_ = cmd.Flags().MarkHidden("forward-worker")
 	var jsonOutput, runningOnly bool
-	var statusFilter string
+	var statusFilter, groupFilter string
 	ls := &cobra.Command{
 		Use: "ls", Short: "List forwards and their status", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -177,12 +194,16 @@ listening after individual client/target failures (--continue-on-error=true).`,
 			if err != nil {
 				return err
 			}
-			if statusFilter != "" {
+			if statusFilter != "" || groupFilter != "" {
 				filtered := make([]forward.Record, 0, len(records))
 				for _, r := range records {
-					if r.Status == statusFilter {
-						filtered = append(filtered, r)
+					if statusFilter != "" && r.Status != statusFilter {
+						continue
 					}
+					if groupFilter != "" && !strings.EqualFold(r.Group, groupFilter) {
+						continue
+					}
+					filtered = append(filtered, r)
 				}
 				records = filtered
 			}
@@ -190,7 +211,7 @@ listening after individual client/target failures (--continue-on-error=true).`,
 				return writeForwardJSON(cmd.OutOrStdout(), records)
 			}
 			out := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			if _, err := fmt.Fprintln(out, "ID\tTYPE\tNAME\tLISTEN\tTARGET\tPID\tSTATUS\tERROR"); err != nil {
+			if _, err := fmt.Fprintln(out, "ID\tTYPE\tNAME\tLISTEN\tTARGET\tPID\tSTATUS\tALIAS\tGROUP\tERROR"); err != nil {
 				return err
 			}
 			for _, r := range records {
@@ -201,7 +222,14 @@ listening after individual client/target failures (--continue-on-error=true).`,
 				if r.Kind() == forward.Dynamic {
 					target = "(socks5)"
 				}
-				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", r.ID, kind, r.Name, r.Listen, target, r.PID, r.Status, sanitizeSingleLine(r.Error)); err != nil {
+				aliasCol, groupCol := r.Alias, r.Group
+				if aliasCol == "" {
+					aliasCol = "-"
+				}
+				if groupCol == "" {
+					groupCol = "-"
+				}
+				if _, err := fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", r.ID, kind, r.Name, r.Listen, target, r.PID, r.Status, aliasCol, groupCol, sanitizeSingleLine(r.Error)); err != nil {
 					return err
 				}
 			}
@@ -210,46 +238,92 @@ listening after individual client/target failures (--continue-on-error=true).`,
 	}
 	ls.Flags().BoolVar(&jsonOutput, "json", false, "print records as JSON")
 	ls.Flags().StringVar(&statusFilter, "status", "", "filter by status: running, starting, stopped, failed, stale, corrupt")
+	ls.Flags().StringVar(&groupFilter, "group", "", "filter by group name")
 	ls.Flags().BoolVar(&runningOnly, "running", false, "show only running forwards (equivalent to --status running)")
 	ls.MarkFlagsMutuallyExclusive("status", "running")
-	cmd.AddCommand(ls, &cobra.Command{
-		Use: "kill ID", Short: "Stop a forward by ID", Args: cobra.ExactArgs(1), ValidArgsFunction: a.completeForwardIDs("running", "starting"),
+	var killGroup string
+	killCmd := &cobra.Command{
+		Use: "kill ID_OR_ALIAS | --group GROUP", Short: "Stop a forward by ID, alias or group", Args: func(cmd *cobra.Command, args []string) error {
+			if killGroup != "" {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		}, ValidArgsFunction: a.completeForwardIDs("running", "starting"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout+5*time.Second)
 			defer cancel()
-			// The launcher holds the lock while connecting or prompting for trust.
-			// Cancel startup first so it can finish and release that lock.
-			stoppedStartup := false
-			current, err := forward.Read(args[0])
+			if killGroup != "" {
+				return a.stopForwardGroup(ctx, cmd, killGroup)
+			}
+			id, err := forward.ResolveID(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if current.Status == "starting" {
-				if err := forward.Stop(ctx, current.ID); err != nil {
-					return err
-				}
-				stoppedStartup = true
-			}
-			lock, err := forward.Lock(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			defer func() { _ = lock.Close() }()
-			current, err = forward.Read(args[0])
-			if err != nil {
-				return err
-			}
-			if !stoppedStartup || (current.Status != "stopped" && current.Status != "failed") {
-				if err := forward.Stop(ctx, args[0]); err != nil {
-					return err
-				}
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Stopped %s\n", args[0])
-			return err
+			return a.stopForwardByID(ctx, cmd, id)
 		},
-	})
-	cmd.AddCommand(a.forwardRemoveCommand(), a.forwardStartCommand(false), a.forwardStartCommand(true))
+	}
+	killCmd.Flags().StringVar(&killGroup, "group", "", "stop all running or starting forwards in a group")
+	cmd.AddCommand(ls, killCmd)
+	cmd.AddCommand(a.forwardRemoveCommand(), a.forwardStartCommand(false), a.forwardStartCommand(true), a.forwardLogsCommand(), a.forwardProfileCommand(), a.forwardUpCommand(), a.forwardDownCommand())
 	return cmd
+}
+
+func (a *app) stopForwardByID(ctx context.Context, cmd *cobra.Command, id string) error {
+	// The launcher holds the lock while connecting or prompting for trust.
+	// Cancel startup first so it can finish and release that lock.
+	stoppedStartup := false
+	current, err := forward.Read(id)
+	if err != nil {
+		return err
+	}
+	if current.Status == "starting" {
+		if err := forward.Stop(ctx, current.ID); err != nil {
+			return err
+		}
+		stoppedStartup = true
+	}
+	lock, err := forward.Lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+	current, err = forward.Read(id)
+	if err != nil {
+		return err
+	}
+	if !stoppedStartup || (current.Status != "stopped" && current.Status != "failed") {
+		if err := forward.Stop(ctx, id); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Stopped %s\n", id)
+	return err
+}
+
+func (a *app) stopForwardGroup(ctx context.Context, cmd *cobra.Command, group string) error {
+	records, err := forward.List(ctx)
+	if err != nil {
+		return err
+	}
+	var matched []forward.Record
+	for _, r := range records {
+		if strings.EqualFold(r.Group, group) && (r.Status == "running" || r.Status == "starting") {
+			matched = append(matched, r)
+		}
+	}
+	if len(matched) == 0 {
+		return fmt.Errorf("no active forwards in group %q", group)
+	}
+	var failed []error
+	for _, r := range matched {
+		if err := a.stopForwardByID(ctx, cmd, r.ID); err != nil {
+			failed = append(failed, fmt.Errorf("%s: %w", r.ID, err))
+		}
+	}
+	if len(failed) > 0 {
+		return errors.Join(failed...)
+	}
+	return nil
 }
 
 func (a *app) bindForwardRunFlags(target *cobra.Command) {
@@ -441,6 +515,8 @@ func parseForwardAddress(address string) (string, error) {
 // fields such as the transient control socket stay out of the CLI contract.
 type forwardJSON struct {
 	ID      string    `json:"id"`
+	Alias   string    `json:"alias,omitempty"`
+	Group   string    `json:"group,omitempty"`
 	Type    string    `json:"type"`
 	Name    string    `json:"name"`
 	Listen  string    `json:"listen"`
@@ -455,7 +531,7 @@ func writeForwardJSON(w io.Writer, records []forward.Record) error {
 	out := make([]forwardJSON, 0, len(records))
 	for _, r := range records {
 		out = append(out, forwardJSON{
-			ID: r.ID, Type: r.Kind(), Name: r.Name, Listen: r.Listen, Target: r.Target,
+			ID: r.ID, Alias: r.Alias, Group: r.Group, Type: r.Kind(), Name: r.Name, Listen: r.Listen, Target: r.Target,
 			PID: r.PID, Status: r.Status, Started: r.Started, Error: r.Error,
 		})
 	}

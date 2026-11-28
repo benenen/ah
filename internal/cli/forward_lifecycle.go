@@ -88,7 +88,16 @@ func (a *app) forwardRemoveCommand() *cobra.Command {
 				return nil
 			}
 			if !all {
-				return a.removeForward(cmd, args[0], force)
+				id, err := forward.ResolveID(cmd.Context(), args[0])
+				if err != nil {
+					// Allow raw IDs for corrupt records that ResolveID might not match as alias.
+					if len(args[0]) == 16 {
+						id = args[0]
+					} else {
+						return err
+					}
+				}
+				return a.removeForward(cmd, id, force)
 			}
 			records, err := forward.List(cmd.Context())
 			if err != nil {
@@ -211,107 +220,149 @@ func (a *app) forwardStartCommand(restart bool) *cobra.Command {
 		name, description = "restart", "Restart a forward in the background using the same ID"
 		statuses = []string{"running", "starting", "stopped", "failed"}
 	}
+	var group string
 	cmd := &cobra.Command{
-		Use: name + " ID", Short: description, Args: cobra.ExactArgs(1),
+		Use: name + " ID_OR_ALIAS | --group GROUP", Short: description,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if group != "" {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		ValidArgsFunction: a.completeForwardIDs(statuses...),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx, cancel := context.WithTimeout(cmd.Context(), a.timeout+5*time.Second)
 			defer cancel()
-			validateRestartConfig := func(r forward.Record) (app, error) {
-				options := *a
-				if !cmd.Flags().Changed("config") && r.ConfigPath != "" {
-					options.configPath = r.ConfigPath
-				}
-				if !cmd.Flags().Changed("key-file") && r.KeyPath != "" {
-					options.keyPath = r.KeyPath
-				}
-				if !cmd.Flags().Changed("known-hosts") && r.KnownHosts != "" {
-					options.knownHosts = r.KnownHosts
-				}
-				if !cmd.Flags().Changed("timeout") && r.Timeout > 0 {
-					options.timeout = r.Timeout
-				}
-				if !cmd.Flags().Changed("keepalive") {
-					options.keepAlive = r.KeepAlive
-				}
-				if !cmd.Flags().Changed("continue-on-error") {
-					options.forwardContinue = r.ContinueOnError
-				}
-				if !cmd.Flags().Changed("reconnect") {
-					options.forwardReconnect = r.Reconnect
-				}
-				// Validate configuration before stopping a working forward.
-				c, err := options.connection(r.Name)
-				if err != nil {
-					return options, err
-				}
-				if _, err := options.resolveSSHRoute(r.Name, c); err != nil {
-					return options, err
-				}
-				return options, nil
-			}
-			stoppedStartup := false
-			if restart {
-				current, err := forward.Read(args[0])
+			if group != "" {
+				records, err := forward.List(ctx)
 				if err != nil {
 					return err
 				}
-				if current.Status == "starting" {
-					if _, err := validateRestartConfig(current); err != nil {
-						return err
+				var matched []string
+				for _, r := range records {
+					if !strings.EqualFold(r.Group, group) {
+						continue
 					}
-					if err := forward.Stop(ctx, current.ID); err != nil {
-						return err
+					if r.Status == "stale" || r.Status == "corrupt" || (!restart && r.Status != "stopped" && r.Status != "failed") {
+						continue
 					}
-					stoppedStartup = true
+					matched = append(matched, r.ID)
 				}
+				if len(matched) == 0 {
+					return fmt.Errorf("no matching forwards in group %q", group)
+				}
+				var failed []error
+				for _, id := range matched {
+					if err := a.startOrRestartForwardByID(ctx, cmd, id, restart); err != nil {
+						failed = append(failed, fmt.Errorf("%s: %w", id, err))
+					}
+				}
+				return errors.Join(failed...)
 			}
-			lock, err := forward.Lock(ctx, args[0])
+			id, err := forward.ResolveID(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			defer func() { err = errors.Join(err, lock.Close()) }()
-			r, err := forward.Read(args[0])
-			if err != nil {
-				return err
-			}
-			options, err := validateRestartConfig(r)
-			if err != nil {
-				return err
-			}
-			if restart && (!stoppedStartup && (r.Status == "running" || r.Status == "starting")) {
-				if err := forward.Stop(ctx, r.ID); err != nil {
-					return err
-				}
-				r, err = forward.Read(r.ID)
-				if err != nil {
-					return err
-				}
-			}
-			if r.Status != "stopped" && r.Status != "failed" {
-				return fmt.Errorf("forward %s is %s; stop it before starting", r.ID, r.Status)
-			}
-			workDir := r.WorkDir
-			if err := options.captureForwardOptions(&r); err != nil {
-				return err
-			}
-			if workDir != "" {
-				r.WorkDir = workDir
-			}
-			r.Status, r.Error, r.Socket, r.PID, r.Started = "starting", "", "", 0, time.Now()
-			if err := r.Save(); err != nil {
-				return err
-			}
-			if err := options.startForwardDaemon(cmd, r); err != nil {
-				r.Status, r.Error = "failed", err.Error()
-				return errors.Join(err, r.Save())
-			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), r.ID)
-			return err
+			return a.startOrRestartForwardByID(ctx, cmd, id, restart)
 		},
 	}
+	cmd.Flags().StringVar(&group, "group", "", "start or restart all matching forwards in a group")
 	a.bindForwardRunFlags(cmd)
 	return cmd
+}
+
+func (a *app) startOrRestartForwardByID(ctx context.Context, cmd *cobra.Command, id string, restart bool) (err error) {
+	validateRestartConfig := func(r forward.Record) (app, error) {
+		options := *a
+		if !cmd.Flags().Changed("config") && r.ConfigPath != "" {
+			options.configPath = r.ConfigPath
+		}
+		if !cmd.Flags().Changed("key-file") && r.KeyPath != "" {
+			options.keyPath = r.KeyPath
+		}
+		if !cmd.Flags().Changed("known-hosts") && r.KnownHosts != "" {
+			options.knownHosts = r.KnownHosts
+		}
+		if !cmd.Flags().Changed("timeout") && r.Timeout > 0 {
+			options.timeout = r.Timeout
+		}
+		if !cmd.Flags().Changed("keepalive") {
+			options.keepAlive = r.KeepAlive
+		}
+		if !cmd.Flags().Changed("continue-on-error") {
+			options.forwardContinue = r.ContinueOnError
+		}
+		if !cmd.Flags().Changed("reconnect") {
+			options.forwardReconnect = r.Reconnect
+		}
+		// Validate configuration before stopping a working forward.
+		c, err := options.connection(r.Name)
+		if err != nil {
+			return options, err
+		}
+		if _, err := options.resolveSSHRoute(r.Name, c); err != nil {
+			return options, err
+		}
+		return options, nil
+	}
+	stoppedStartup := false
+	if restart {
+		current, err := forward.Read(id)
+		if err != nil {
+			return err
+		}
+		if current.Status == "starting" {
+			if _, err := validateRestartConfig(current); err != nil {
+				return err
+			}
+			if err := forward.Stop(ctx, current.ID); err != nil {
+				return err
+			}
+			stoppedStartup = true
+		}
+	}
+	lock, err := forward.Lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	r, err := forward.Read(id)
+	if err != nil {
+		return err
+	}
+	options, err := validateRestartConfig(r)
+	if err != nil {
+		return err
+	}
+	if restart && (!stoppedStartup && (r.Status == "running" || r.Status == "starting")) {
+		if err := forward.Stop(ctx, r.ID); err != nil {
+			return err
+		}
+		r, err = forward.Read(r.ID)
+		if err != nil {
+			return err
+		}
+	}
+	if r.Status != "stopped" && r.Status != "failed" {
+		return fmt.Errorf("forward %s is %s; stop it before starting", r.ID, r.Status)
+	}
+	workDir := r.WorkDir
+	if err := options.captureForwardOptions(&r); err != nil {
+		return err
+	}
+	if workDir != "" {
+		r.WorkDir = workDir
+	}
+	r.Status, r.Error, r.Socket, r.PID, r.Started = "starting", "", "", 0, time.Now()
+	if err := r.Save(); err != nil {
+		return err
+	}
+	if err := options.startForwardDaemon(cmd, r); err != nil {
+		r.Status, r.Error = "failed", err.Error()
+		return errors.Join(err, r.Save())
+	}
+	_, err = fmt.Fprintln(cmd.OutOrStdout(), r.ID)
+	return err
 }
 
 func (a *app) completeForwardIDs(statuses ...string) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
@@ -339,9 +390,6 @@ func (a *app) completeForwardIDs(statuses ...string) func(*cobra.Command, []stri
 			if len(allowed) > 0 && !allowed[r.Status] {
 				continue
 			}
-			if !strings.HasPrefix(r.ID, partial) {
-				continue
-			}
 			flag := forwardFlags[r.Kind()]
 			target := r.Target
 			if r.Kind() == forward.Dynamic {
@@ -351,7 +399,12 @@ func (a *app) completeForwardIDs(statuses ...string) func(*cobra.Command, []stri
 			if r.Status == "corrupt" {
 				desc = "corrupt"
 			}
-			candidates = append(candidates, r.ID+"\t"+desc)
+			if strings.HasPrefix(r.ID, partial) {
+				candidates = append(candidates, r.ID+"\t"+desc)
+			}
+			if r.Alias != "" && strings.HasPrefix(r.Alias, partial) {
+				candidates = append(candidates, r.Alias+"\t"+desc)
+			}
 		}
 		return candidates, directive
 	}
