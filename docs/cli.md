@@ -230,7 +230,7 @@ ah c nas "cat '/home/alice/a file.txt'"
 
 与 SSH 一样，连接名后的参数用空格连接，再交给远程 shell 解析。需要远端执行管道、重定向、变量展开或保留含空格的单个参数时，给整个命令加本地引号，并保留必要的远端引号。未引用的 `|`、`>`、`$VAR` 由本地 shell 处理。
 
-`ah c nas ls --help` 的 `--help` 发给远端 `ls`。查看本地连接命令帮助请用 `ah c --help`。命令模式目前没有 `-t`/`-tt` 强制 PTY 选项。
+`ah c nas ls --help` 的 `--help` 发给远端 `ls`。查看本地连接命令帮助请用 `ah c --help`。要在执行远程命令时强制分配伪终端（如运行 `tmux`、`htop`、`docker exec -it`），可在连接名前加 `-t`/`--tty`（仅在本地 stdin 为终端时生效）或 `-tt`（即使无本地终端也强制分配 80x24 PTY）。
 
 ### 终端兼容
 
@@ -254,9 +254,10 @@ Windows 主机按 SSH 版本号里的 `OpenSSH_for_Windows` 识别，选中的 s
 ah exec --tag prod --dry-run -- 'df -h'
 ah exec --tag prod --jobs 4 -- 'df -h'
 ah exec --tag prod,web --jobs 2 --exec-timeout 30s -- 'systemctl status nginx'
+ah exec --tag prod --script ./check.sh --json
 ```
 
-至少一个标签和 `--` 分隔符是必需的。多个标签取交集，忽略大小写；无匹配时报错。`--dry-run` 只列出选中的连接名，不联网。`--` 后参数按 SSH 规则用空格拼接，远程管道、重定向和需要保留的引号请整体引用。
+至少一个标签是必需的；命令模式需带 `--` 分隔符，或改用 `--script FILE`（经 `/bin/sh -s` 执行本地脚本，上限 1 MiB，两者互斥）。`--json` 会捕获每台主机的 stdout/stderr 并输出结构化 JSON 结果数组（`--dry-run --json` 输出选中的连接名数组）。多个标签取交集，忽略大小写；无匹配时报错。`--dry-run` 只列出选中的连接名，不联网。`--` 后参数按 SSH 规则用空格拼接，远程管道、重定向和需要保留的引号请整体引用。
 
 并发默认 4 台，`--jobs` 范围 1–64。单台失败继续其他目标，不自动重试。`--exec-timeout` 限制每台从连接到命令完成的总时间，默认 0 不限时，负数拒绝；全局 `--timeout` 仍为连接/握手超时。
 
@@ -335,10 +336,11 @@ ah edit nas --sftp-server ''
 
 ```sh
 ah doctor nas
+ah doctor --tag prod --jobs 4 --json
 ah --keepalive 30s forward nas 15432 5432 --continue-on-error -d
 ```
 
-`doctor` 按阶段报告配置、认证资料、TCP 或代理链、SSH 密钥交换、主机密钥校验、认证、sudo、SFTP 与复制所需扩展的检查结果，失败返回非零。sudo 未开启时跳过。它正常校验主机身份，首次连接仍需信任确认；SFTP 初始化也受超时限制。不创建测试文件，因此不验证具体目标目录的写权限或磁盘空间。
+`doctor` 支持单台 `NAME` 或 `--tag TAG`（并发检查，支持 `--jobs` 与 `--json` 结构化输出），按阶段报告配置、认证资料、TCP 或代理链、SSH 密钥交换、主机密钥校验、认证、sudo、SFTP 与复制所需扩展的检查结果，失败返回非零。sudo 未开启时跳过。它正常校验主机身份，首次连接仍需信任确认；SFTP 初始化也受超时限制。不创建测试文件，因此不验证具体目标目录的写权限或磁盘空间。
 
 `--keepalive DURATION` 定期发送 SSH 保活请求，全局默认 0 关闭（可在 `new/edit --keepalive` 写入连接配置作为默认值，`edit --clear-keepalive` 清除，全局 `--keepalive` 可覆盖）；等待回复超过 `--timeout` 时关闭失去响应的 SSH 连接。服务端返回“不支持此请求”也算有效回复。`forward` 在未显式指定 `--keepalive` 且连接未配置时默认使用 `30s` 保活，可用 `--keepalive 0` 关闭；`forward --continue-on-error` 默认 `true`，让 `-L/-R` 的单次目标连接或传输失败只断开该客户端，并将错误写入 stderr（后台运行时写日志），随后继续监听（显式 `--continue-on-error=false` 可恢复遇错即停）。SSH 通道打开超时仍需关闭整个 SSH 连接才能解除阻塞。保活与容错选项保存在转发记录中，start/restart 沿用，可显式覆盖。
 
@@ -359,6 +361,11 @@ ah forward restart <ID>
 ah forward rm <ID>
 ah forward rm -f <ID>
 ah forward rm --all
+ah forward A 8080 80 -d --alias web --group dev
+ah forward logs web -f -n 50
+ah forward profile add pg A 15432 db.internal:5432 --group dev
+ah forward up --group dev
+ah forward down --group dev
 ah forward rm --all -f
 ```
 
@@ -434,6 +441,9 @@ ah cp ./README.md nas:/home/alice/       # 上传
 ah cp nas:/home/alice/report.csv ./     # 下载
 ah cp A:/data/report.csv B:/backup/     # 远端到远端，经本机流式中转
 ah cp ./report.csv ./backup.csv        # 本地到本地
+ah cp ./a.txt ./b.txt nas:/tmp/        # 多源复制到已有远端目录
+ah cp --tag web ./app.conf :/etc/app/  # 按标签并发分发本地文件到多台主机
+ah cp -p --fast --bwlimit 10M ./a.tar nas:/tmp/  # 保留 mtime、快速比对并限速
 ah cp 'nas:~/季度 报告.csv' './季度 报告.csv'
 ah cp ./name:part nas:/home/alice/      # 本地文件名含冒号，用 ./ 明确本地语义
 ```
@@ -521,6 +531,7 @@ ah diff ./dist web:/srv/app
 ah sync ./dist web:/srv/app
 ah sync --delete --dry-run ./dist web:/srv/app
 ah sync --delete --exclude '*.log' --exclude 'uploads/' ./dist web:/srv/app
+ah sync --delete --backup --backup-keep 5 -p --fast ./dist web:/srv/app
 ```
 
 支持本地与远端四种方向，源、目标均为目录。内容直接同步到目标根，不追加源目录名；目标缺失时创建，父目录须存在。文件按内容和权限比较，相同文件保留；新建目录继承源权限，已有目录保留权限。

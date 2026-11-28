@@ -58,7 +58,8 @@ user = "bob"
 - `cp -r`：按 cp -r 解析目标（已有目录则落到 目标/源名，否则新建）；落点已存在时无 -f 在写入前报错，-f 合并（同名文件逐个原子替换，多余文件保留）；文件/目录类型冲突报错；同一文件系统禁止复制进自身。符号链接与特殊文件跳过并在 stderr 报告。目录先以 0700 建立，结束后自深向浅设源权限位，合并时不改已有目录权限。树整体非原子，失败保留已复制文件。本地目标逐个文件检查历史库保护。
 - `--backup [--backup-keep N]`（默认 5，1–1000）：替换已有普通文件前，将其硬链接为同目录 `bak.NAME.bak-<UTC 纳秒时间戳>`，此前按时间删除最旧的同名备份使总数不超过 N；只识别严格匹配该格式的文件。隐含覆盖（用于目录时隐含合并）；远端需 hardlink@openssh.com。
 - `backup ls TARGET` 按时间倒序列出 TARGET 的备份（序号、UTC 时间、大小、文件名），无备份时正常退出并说明。`backup restore TARGET [VERSION] [--backup-keep N]`：VERSION 省略取最新，可为序号（<8 位数字）、≥8 位的时间戳前缀或完整备份名，匹配多份报错；先按 --backup 规则备份当前文件（被还原的那份不参与清理，可能因此多留一份），再原子写回，内容相同则不动；目标缺失也可还原；不写复制历史。
-- 替换模式（-f/--backup）下，目标为普通文件且大小、权限位、内容均与源相同时跳过：不替换、不备份，计为 unchanged 并在输出中报告；进度按已完成计。
+- 替换模式（-f/--backup）下，目标为普通文件且大小、权限位、内容均与源相同时跳过：不替换、不备份，计为 unchanged 并在输出中报告；进度按已完成计。启用 `--fast` 时仅校验大小、权限位和秒级截断后的 mtime，跳过逐字节读取。`cp`/`sync` 支持 `-p`/`--preserve-times` 保留源修改时间，以及 `--bwlimit RATE`（如 `500K`、`10M`）限制传输速率。历史库自动补列 `preserve_times`、`fast`、`bwlimit`并在 `show`/`run` 中保留。
+`cp SOURCE... DESTINATION` 支持多源路径复制，要求目标为已存在目录并复用连接、逐个记录历史；`cp --tag TAG [--jobs N]` 支持将本地源并发分发到匹配连接（目标须以 `:` 开头，如 `:/tmp/`，非交互且输出汇总）。
 - `ah cp <Tab>` 可补全连接别名；`ah cp A:/dir/<Tab>` 查询 A 的目录；第二个参数按 B 的连接独立补全。
 - 目录候选追加 `/`，正确处理空格、中文及 shell 特殊字符；使用 SFTP 列目录，不拼接远程 shell 命令。
 - 远程路径按 POSIX 语义处理；`~` 使用 SFTP Getwd 返回的登录目录显式展开；拒绝 `~user`。
@@ -79,7 +80,7 @@ user = "bob"
 
 ## 远程命令契约
 
-连接名后的参数按 SSH 方式用空格连接，交给远程 shell 解析；ah 自身选项必须位于连接名前，之后的选项属于远程命令。命令模式不申请 PTY、不将本地终端改为 raw，转发 stdin/stdout/stderr，保留远程退出码；完成或取消时停止输入转发并关闭连接，保留调用方 stdin。无命令时维持既有交互终端行为。
+连接名后的参数按 SSH 方式用空格连接，交给远程 shell 解析；ah 自身选项必须位于连接名前，之后的选项属于远程命令。命令模式默认不申请 PTY、不将本地终端改为 raw，转发 stdin/stdout/stderr，保留远程退出码；在连接名前传入 `-t`/`--tty` 时仅当本地 stdin 为终端才申请 PTY（非终端时向 stderr 警告并降级），传入 `-tt` 时即使本地 stdin 非终端也强制申请 80x24 PTY（不切换本地 raw）。完成或取消时停止输入转发并关闭连接，保留调用方 stdin。无命令时维持既有交互终端行为。
 
 交互模式申请 PTY 时，按 OpenSSH 的做法在切换 raw 前读取本地终端设置，把控制字符、输入/输出/本地标志和真实波特率随 pty-req 发给远端；erase 键与 IUTF8 必须生效，否则 backspace 在 canonical 输入下会按字节删除多字节字符。CS7/CS8 共用 CSIZE 位且服务端按任意顺序应用，只发送当前实际字宽；sudo 认证期间仍强制关闭回显。
 
@@ -132,7 +133,7 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 
 每次新建生成独立 ID，-d 后台运行（Linux/macOS），无 -d 保留前台和 Ctrl+C。
 后台只在 SSH 与本地监听准备完成后报告成功，不能交互索取密码；失败向调用方返回非零状态。
-`forward ls` 展示当前用户的前后台记录和运行状态，支持 `--status` / `--running` 筛选（互斥），`--json` 输出稳定的 id/name/listen/target/pid/status/started/error 字段；`forward kill ID` 通过带 ID 校验的私有控制通道取消并等待停止，
+`forward ls` 展示当前用户的前后台记录和运行状态，支持 `--status` / `--running` / `--group` 筛选，`--json` 输出稳定的 id/alias/group/type/name/listen/target/pid/status/started/error 字段；`forward` 支持 `--alias` 与 `--group` 标记记录；`forward kill ID_OR_ALIAS | --group GROUP` 通过带 ID 校验的私有控制通道取消并等待停止，`forward logs ID_OR_ALIAS [-f] [-n N]` 查看或跟踪后台转发日志。`forward profile add/ls/rm`（别名 `p`）在 `ah/forwards/profiles.toml` 管理可复用转发配置，`forward up/down ALIAS | --group GROUP` 批量启停后台转发。
 避免旧 PID 被复用时误杀其他进程。停止/失败记录保留，无法联系的 running 记录显示 stale。`kill`/`start`/`restart`/`rm` 支持按对应状态过滤的转发 ID Tab 补全。
 单条记录文件损坏（或文件名不是合法 ID）时只将该条标为 corrupt 并附原因，不得因此让整份列表失败；corrupt 记录无法核验或停止其工作进程，也不根据残留 PID 杀进程。
 状态和日志保存在用户配置目录 ah/forwards（目录 0700，文件 0600），不随 --config 分组。
@@ -162,7 +163,7 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 
 ## 诊断与保活扩展
 
-`doctor NAME` 检查配置、认证资料加载、TCP/代理链、SSH 密钥交换、host key、认证、sudo（启用时）、SFTP 及 hardlink/posix-rename 扩展，各阶段输出 OK/FAIL；失败非零。不绕过主机身份校验，不写测试文件。SFTP 启动受 --timeout 约束。
+`doctor [NAME] [--tag TAG...] [--jobs N] [--json]` 检查配置、认证资料加载、TCP/代理链、SSH 密钥交换、host key、认证、sudo（启用时）、SFTP 及 hardlink/posix-rename 扩展，各阶段输出 OK/FAIL（或结构化 JSON）；支持按标签并发检查，失败非零。不绕过主机身份校验，不写测试文件。SFTP 启动受 --timeout 约束。
 
 全局 `--keepalive` 默认 0 关闭（连接 TOML 支持 `keepalive` 持久化默认保活，由 `new/edit --keepalive` 和 `edit --clear-keepalive` 管理，全局 `--keepalive` 可覆盖；`forward` 未显式指定 `--keepalive` 且连接未配置时默认 30s），负值拒绝；非零周期发送 want-reply SSH 请求，任意回复视为存活，超时按 --timeout 关闭连接，取消与关闭回收请求 goroutine。`forward --continue-on-error` 默认 true，启用时单次 -L/-R 目标拨号/传输错误写 stderr 并继续监听（`CloseWrite` 的 `net.ErrClosed`/`io.EOF`/`ENOTCONN` 视为正常收尾）；SSH channel-open 超时仍结束传输。后台与 start/restart 保留选项，显式标志覆盖保存值。
 
@@ -186,7 +187,7 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 
 - `diff SOURCE DESTINATION` 与 `sync SOURCE DESTINATION` 仅接受目录，支持四种本地/远端方向，直接映射目录内容，不追加源目录名；目标根可缺失，父目录必须存在。
 - `diff` 只读比较普通文件的内容与权限，输出 add/mkdir/modify/target-only/conflict；相同文件不输出。类型冲突可展示，实际 sync 和同步预览报错。目录权限同递归复制：新目录继承源权限，已有目录保留权限。
-- `sync` 默认新增和原子替换差异文件、保留目标多余项目；`--delete` 仅在新增/更新成功且源清单复查未变化后删除目标多余普通文件及空目录，逐项复查目标类型和文件大小/时间/权限，不递归强删。
+- `sync` 默认新增和原子替换差异文件、保留目标多余项目；`--delete` 仅在新增/更新成功且源清单复查未变化后删除目标多余普通文件及空目录，逐项复查目标类型和文件大小/时间/权限，不递归强删。`sync` 支持 `--backup [--backup-keep N]`（可与 `--delete` 组合，在替换或删除前为目标普通文件创建备份，并保留已有备份及其所在非空目录）、`-p`/`--preserve-times`、`--fast` 和 `--bwlimit RATE`。`diff` 支持 `--fast`。
 - 两命令支持重复 `--exclude`，沿用 cp 排除语义，命中任一端的项目及子树均保留；符号链接及特殊文件跳过并保留，不删除包含这些项目的多余祖先目录。输出 exclude/skip-special/retain 说明保留原因。
 - 拒绝非目录或符号链接根路径。同一本地文件系统或同一连接名下，在解析现有祖先真实路径后拒绝任意方向重叠。不同连接别名或本地与远端是否指向同一存储无法保证识别。
 - `sync --dry-run` 不写目标或历史，用 delete/retain 展示多余项处理；与 diff 一样仅反映查询时状态，不保证真实写权限、空间和发布扩展可用。SSH 信任沿用既有规则。
@@ -206,7 +207,7 @@ IPv6 使用方括号。明确填写 0.0.0.0 才监听所有 IPv4 网卡，不采
 
 ## 按标签批量执行远程命令
 
-- `exec --tag TAG [--jobs N] [--exec-timeout DURATION] [--dry-run] -- COMMAND [ARG...]` 必须显式指定非空标签及 -- 分隔符。支持重复或逗号分隔标签，忽略大小写、全部匹配，复用 list 标签筛选。无匹配时报错，不默认选中所有连接；--tag 补全已有标签。
+- `exec --tag TAG [--jobs N] [--exec-timeout DURATION] [--dry-run] [--script FILE | -- COMMAND [ARG...]] [--json]` 必须显式指定非空标签。支持 `--script FILE`（经 `/bin/sh -s` 读入本地脚本执行，上限 1 MiB，与 `-- COMMAND` 互斥）和 `--json`（捕获 stdout/stderr 并输出结构化 JSON 结果数组）。支持重复或逗号分隔标签，忽略大小写、全部匹配，复用 list 标签筛选。无匹配时报错，不默认选中所有连接；--tag 补全已有标签。
 - 命令参数按既有 SSH 规则空格拼接，交给远端 shell，不申请 PTY，不转发本地 stdin。--dry-run 按名称排序输出选中别名，不联网、不执行。
 - --jobs 默认 4，取值 1–64，用固定数量 worker 限制同时拨号/执行的主机数；单台失败不取消其他目标，不自动重试。--exec-timeout 默认 0，非零为每台从拨号到命令完成的总限时，负数拒绝。全局 --timeout 仍约束连接/握手。
 - stdout/stderr 保持独立，逐行带 [NAME] 前缀并同步写入；尾部无换行时补换行，超 32 KiB 单行分段并补换行，限制每条流缓存。输出写入失败取消整批连接，不继续等待无限流命令。
