@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pkg/sftp"
 )
@@ -38,9 +39,10 @@ type TreeResult struct {
 }
 
 type treeEntry struct {
-	rel  string // slash-separated path below the source root; "" is the root
-	mode os.FileMode
-	size int64
+	rel     string // slash-separated path below the source root; "" is the root
+	mode    os.FileMode
+	size    int64
+	modTime time.Time
 }
 
 // CopyTree copies a directory like cp -r: when target is an existing directory
@@ -143,7 +145,7 @@ func CopyTree(ctx context.Context, src, dst *sftp.Client, source, target string,
 	}
 
 	// Walk first so progress has a total and skipped entries are known up front.
-	entries := []treeEntry{{mode: info.Mode()}}
+	entries := []treeEntry{{mode: info.Mode(), modTime: info.ModTime()}}
 	var total int64
 	var walk func(rel string) error
 	walk = func(rel string) error {
@@ -169,7 +171,7 @@ func CopyTree(ctx context.Context, src, dst *sftp.Client, source, target string,
 			}
 			switch mode := child.Mode(); {
 			case mode.IsDir():
-				entries = append(entries, treeEntry{rel: childRel, mode: mode})
+				entries = append(entries, treeEntry{rel: childRel, mode: mode, modTime: child.ModTime()})
 				if err := walk(childRel); err != nil {
 					return err
 				}
@@ -194,7 +196,13 @@ func CopyTree(ctx context.Context, src, dst *sftp.Client, source, target string,
 	defer func() {
 		for i := len(created) - 1; i >= 0; i-- {
 			d := created[i]
-			if chmodErr := targetFS.Chmod(targetFS.below(target, d.rel), d.mode.Perm()); chmodErr != nil && err == nil {
+			dirPath := targetFS.below(target, d.rel)
+			if opts.PreserveTimes && err == nil {
+				if timeErr := targetFS.Chtimes(dirPath, d.modTime, d.modTime); timeErr != nil {
+					err = fmt.Errorf("set directory timestamps: %w", timeErr)
+				}
+			}
+			if chmodErr := targetFS.Chmod(dirPath, d.mode.Perm()); chmodErr != nil && err == nil {
 				err = fmt.Errorf("set directory permissions: %w", chmodErr)
 			}
 		}

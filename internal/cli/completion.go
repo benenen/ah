@@ -30,11 +30,15 @@ func (a *app) completeNames(_ *cobra.Command, args []string, partial string) ([]
 	}
 	return names, directive
 }
-func (a *app) completeRemote(cmd *cobra.Command, args []string, partial string) ([]string, cobra.ShellCompDirective) {
-	directive := cobra.ShellCompDirectiveNoFileComp
+func (a *app) completeRemotePair(cmd *cobra.Command, args []string, partial string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 1 {
-		return nil, directive
+		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
+	return a.completeRemote(cmd, args, partial)
+}
+
+func (a *app) completeRemote(cmd *cobra.Command, _ []string, partial string) ([]string, cobra.ShellCompDirective) {
+	directive := cobra.ShellCompDirectiveNoFileComp
 	name, p, remote := strings.Cut(partial, ":")
 	if !remote || config.ValidateName(name) != nil {
 		names, _ := a.completeNames(cmd, nil, partial)

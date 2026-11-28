@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pkg/sftp"
 )
@@ -22,6 +23,7 @@ type SyncOptions struct {
 type directoryEntry struct {
 	info    os.FileInfo
 	blocked bool
+	backup  bool
 }
 
 type directoryPlan struct {
@@ -35,13 +37,35 @@ type directoryPlan struct {
 // Target-only entries are reported regardless of the deletion option.
 func DiffDirectories(ctx context.Context, src, dst *sftp.Client, source, target string, opts SyncOptions, emit func(PlanEntry) error) (err error) {
 	defer closeOnCancel(ctx, src, dst)(&err)
-	p, err := planDirectories(ctx, filesystem{src}, filesystem{dst}, source, target, opts)
+	tf := filesystem{dst}
+	p, err := planDirectories(ctx, filesystem{src}, tf, source, target, opts)
 	if err != nil {
 		return err
 	}
 	for _, e := range p.changes {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if opts.BackupKeep > 0 && (e.Action == "modify" || (opts.Delete && e.Action == "target-only")) {
+			rel, relErr := directoryRelative(tf, p.target, e.Target)
+			if relErr != nil {
+				return relErr
+			}
+			if to, ok := p.targetEntries[rel]; ok && to.info.Mode().IsRegular() {
+				backups, bErr := tf.Backups(e.Target)
+				if bErr != nil {
+					return bErr
+				}
+				count := len(backups) - opts.BackupKeep + 1
+				for i := 0; i < count; i++ {
+					if err := emit(PlanEntry{Action: "prune-backup", Target: backups[i]}); err != nil {
+						return err
+					}
+				}
+				if err := emit(PlanEntry{Action: "backup", Target: e.Target}); err != nil {
+					return err
+				}
+			}
 		}
 		if err := emit(e); err != nil {
 			return err
@@ -53,9 +77,6 @@ func DiffDirectories(ctx context.Context, src, dst *sftp.Client, source, target 
 // SyncDirectories publishes changed files first, then removes target-only entries
 // when requested. A failure leaves completed changes in place; the tree is not atomic.
 func SyncDirectories(ctx context.Context, src, dst *sftp.Client, source, target string, opts SyncOptions) (result TreeResult, err error) {
-	if opts.BackupKeep > 0 && opts.Delete {
-		return result, fmt.Errorf("sync --delete cannot be combined with --backup")
-	}
 	defer closeOnCancel(ctx, src, dst)(&err)
 	sf, tf := filesystem{src}, filesystem{dst}
 	p, err := planDirectories(ctx, sf, tf, source, target, opts)
@@ -84,7 +105,14 @@ func SyncDirectories(ctx context.Context, src, dst *sftp.Client, source, target 
 		}
 		for i := len(created) - 1; i >= 0; i-- {
 			rel := created[i]
-			if chmodErr := tf.Chmod(tf.below(p.target, rel), p.sourceEntries[rel].info.Mode().Perm()); chmodErr != nil && err == nil {
+			dirPath := tf.below(p.target, rel)
+			if opts.PreserveTimes && err == nil {
+				mtime := p.sourceEntries[rel].info.ModTime()
+				if timeErr := tf.Chtimes(dirPath, mtime, mtime); timeErr != nil {
+					err = fmt.Errorf("set directory timestamps: %w", timeErr)
+				}
+			}
+			if chmodErr := tf.Chmod(dirPath, p.sourceEntries[rel].info.Mode().Perm()); chmodErr != nil && err == nil {
 				err = fmt.Errorf("set directory permissions: %w", chmodErr)
 			}
 		}
@@ -142,7 +170,7 @@ func SyncDirectories(ctx context.Context, src, dst *sftp.Client, source, target 
 		return result, nil
 	}
 	// Refuse pruning if the source inventory changed after the comparison/copy.
-	current, err := scanDirectory(ctx, sf, p.source, opts.Exclude, false)
+	current, err := scanDirectory(ctx, sf, p.source, opts.Exclude, false, false)
 	if err != nil {
 		return result, err
 	}
@@ -172,9 +200,24 @@ func SyncDirectories(ctx context.Context, src, dst *sftp.Client, source, target 
 		if now.Mode() != old.Mode() || (!old.IsDir() && (now.Size() != old.Size() || !now.ModTime().Equal(old.ModTime()))) {
 			return result, fmt.Errorf("destination changed before deletion: %s", e.Target)
 		}
-		if old.IsDir() && tf.client != nil {
-			err = tf.client.RemoveDirectory(e.Target)
+		if old.IsDir() {
+			if opts.BackupKeep > 0 {
+				entries, readErr := tf.ReadDir(e.Target)
+				if readErr == nil && len(entries) > 0 {
+					continue
+				}
+			}
+			if tf.client != nil {
+				err = tf.client.RemoveDirectory(e.Target)
+			} else {
+				err = tf.Remove(e.Target)
+			}
 		} else {
+			if opts.BackupKeep > 0 {
+				if _, backupErr := tf.backup(e.Target, opts.BackupKeep, ""); backupErr != nil {
+					return result, backupErr
+				}
+			}
 			err = tf.Remove(e.Target)
 		}
 		if err != nil {
@@ -202,11 +245,11 @@ func planDirectories(ctx context.Context, sf, tf filesystem, source, target stri
 		return p, fmt.Errorf("source and destination directories must not overlap")
 	}
 	p.source, p.target = source, target
-	p.sourceEntries, err = scanDirectory(ctx, sf, source, opts.Exclude, false)
+	p.sourceEntries, err = scanDirectory(ctx, sf, source, opts.Exclude, false, false)
 	if err != nil {
 		return p, fmt.Errorf("source: %w", err)
 	}
-	p.targetEntries, err = scanDirectory(ctx, tf, target, opts.Exclude, true)
+	p.targetEntries, err = scanDirectory(ctx, tf, target, opts.Exclude, true, opts.BackupKeep > 0)
 	if err != nil {
 		return p, fmt.Errorf("destination: %w", err)
 	}
@@ -236,6 +279,8 @@ func planDirectories(ctx context.Context, sf, tf filesystem, source, target stri
 			if (sourceExists && excluded(rel, from.info.IsDir(), opts.Exclude)) || (targetExists && excluded(rel, to.info.IsDir(), opts.Exclude)) {
 				action = "exclude"
 			}
+		case to.backup && !sourceExists:
+			action = "retain"
 		case !sourceExists:
 			action = "target-only"
 			if to.info.IsDir() && protected[rel] {
@@ -253,14 +298,18 @@ func planDirectories(ctx context.Context, sf, tf filesystem, source, target stri
 		default:
 			same := false
 			if from.info.Size() == to.info.Size() && from.info.Mode().Perm() == to.info.Mode().Perm() {
-				in, err := sf.Open(sf.below(source, rel))
-				if err != nil {
-					return p, err
-				}
-				var compareErr error
-				same, compareErr = sameContent(ctx, in, tf, tf.below(target, rel))
-				if err := errors.Join(compareErr, in.Close()); err != nil {
-					return p, err
+				if opts.Fast {
+					same = from.info.ModTime().Truncate(time.Second).Equal(to.info.ModTime().Truncate(time.Second))
+				} else {
+					in, err := sf.Open(sf.below(source, rel))
+					if err != nil {
+						return p, err
+					}
+					var compareErr error
+					same, compareErr = sameContent(ctx, in, tf, tf.below(target, rel))
+					if err := errors.Join(compareErr, in.Close()); err != nil {
+						return p, err
+					}
 				}
 			}
 			if same {
@@ -278,7 +327,7 @@ func planDirectories(ctx context.Context, sf, tf filesystem, source, target stri
 	return p, nil
 }
 
-func scanDirectory(ctx context.Context, f filesystem, root string, patterns []string, allowMissing bool) (map[string]directoryEntry, error) {
+func scanDirectory(ctx context.Context, f filesystem, root string, patterns []string, allowMissing, protectBackups bool) (map[string]directoryEntry, error) {
 	entries := map[string]directoryEntry{}
 	var walk func(string) error
 	walk = func(rel string) error {
@@ -295,8 +344,9 @@ func scanDirectory(ctx context.Context, f filesystem, root string, patterns []st
 		if rel == "" && !info.IsDir() {
 			return fmt.Errorf("expected directory: %s", root)
 		}
+		isBackup := protectBackups && rel != "" && info.Mode().IsRegular() && isBackupFile(path.Base(rel))
 		blocked := (rel != "" && excluded(rel, info.IsDir(), patterns)) || (!info.IsDir() && !info.Mode().IsRegular())
-		entries[rel] = directoryEntry{info: info, blocked: blocked}
+		entries[rel] = directoryEntry{info: info, blocked: blocked, backup: isBackup}
 		if !info.IsDir() || blocked {
 			return nil
 		}
@@ -382,7 +432,7 @@ func protectedDirectories(maps ...map[string]directoryEntry) map[string]bool {
 	protected := map[string]bool{}
 	for _, entries := range maps {
 		for name, e := range entries {
-			if !e.blocked {
+			if !e.blocked && !e.backup {
 				continue
 			}
 			for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {

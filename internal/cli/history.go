@@ -157,7 +157,18 @@ func (a *app) historyCommand() *cobra.Command {
 			}
 		}
 		// Structured invocation, never shell evaluation of data from SQLite.
-		return replay.copyWithHistory(cmd, record.Source, record.Destination, copyMode{Sync: record.Sync, Delete: record.Delete, Resume: record.Resume, Force: record.Force, Recursive: record.Recursive, BackupKeep: record.BackupKeep, Exclude: record.Exclude}, record.Cwd)
+		return replay.copyWithHistory(cmd, record.Source, record.Destination, copyMode{
+			Sync:           record.Sync,
+			Delete:         record.Delete,
+			Resume:         record.Resume,
+			PreserveTimes:  record.PreserveTimes,
+			Fast:           record.Fast,
+			BandwidthLimit: record.BandwidthLimit,
+			Force:          record.Force,
+			Recursive:      record.Recursive,
+			BackupKeep:     record.BackupKeep,
+			Exclude:        record.Exclude,
+		}, record.Cwd)
 	}}
 	run.Flags().BoolVarP(&force, "force", "f", false, "override recorded overwrite behavior (use --force=false to prevent replacement)")
 	cmd.AddCommand(run)
@@ -222,6 +233,15 @@ func historyShellCommand(r history.Record, historyPath string) (string, error) {
 	}
 	if r.Resume {
 		args = append(args, "--resume")
+	}
+	if r.PreserveTimes {
+		args = append(args, "--preserve-times")
+	}
+	if r.Fast {
+		args = append(args, "--fast")
+	}
+	if r.BandwidthLimit > 0 {
+		args = append(args, "--bwlimit", strconv.FormatInt(r.BandwidthLimit, 10))
 	}
 	for _, pattern := range r.Exclude {
 		args = append(args, "--exclude", pattern)

@@ -87,7 +87,10 @@ func resumeFile(ctx context.Context, tf filesystem, source, target string, in tr
 			return n, e
 		}
 	}
-	reader := io.TeeReader(contextReader{ctx, in}, hash)
+	var reader io.Reader = io.TeeReader(contextReader{ctx, in}, hash)
+	if opts.BandwidthLimit > 0 {
+		reader = &rateLimitedReader{ctx: ctx, in: reader, limit: opts.BandwidthLimit}
+	}
 	var remaining int64
 	remaining, err = io.CopyBuffer(contextWriter{ctx, out}, &resumeReader{reader: reader, base: n, total: info.Size(), progress: progress}, make([]byte, 128*1024))
 	n += remaining
@@ -116,6 +119,11 @@ func resumeFile(ctx context.Context, tf filesystem, source, target string, in tr
 	closed = true
 	if err != nil {
 		return n, err
+	}
+	if opts.PreserveTimes {
+		if err = tf.Chtimes(tmp, info.ModTime(), info.ModTime()); err != nil {
+			return n, fmt.Errorf("set destination timestamps: %w", err)
+		}
 	}
 	if err = ctx.Err(); err != nil {
 		return n, err

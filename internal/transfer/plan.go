@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/pkg/sftp"
 )
@@ -144,13 +145,19 @@ func Plan(ctx context.Context, src, dst *sftp.Client, source, target string, rec
 			}
 			action = "replace"
 			if existing.Mode().IsRegular() && existing.Size() == info.Size() && existing.Mode().Perm() == info.Mode().Perm() {
-				in, err := sf.Open(from)
-				if err != nil {
-					return err
-				}
-				same, compareErr := sameContent(ctx, in, tf, to)
-				if err := errors.Join(compareErr, in.Close()); err != nil {
-					return err
+				var same bool
+				if opts.Fast {
+					same = existing.ModTime().Truncate(time.Second).Equal(info.ModTime().Truncate(time.Second))
+				} else {
+					in, err := sf.Open(from)
+					if err != nil {
+						return err
+					}
+					var compareErr error
+					same, compareErr = sameContent(ctx, in, tf, to)
+					if err := errors.Join(compareErr, in.Close()); err != nil {
+						return err
+					}
 				}
 				if same {
 					return emit(PlanEntry{Action: "unchanged", Source: from, Target: to})

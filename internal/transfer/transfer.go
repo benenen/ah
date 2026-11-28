@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -100,7 +101,11 @@ func Copy(ctx context.Context, src, dst *sftp.Client, source, target string, opt
 
 // Options control how Copy and CopyTree publish destination files.
 type Options struct {
-	Resume bool
+	Resume        bool
+	PreserveTimes bool
+	Fast          bool
+	// BandwidthLimit caps transfer throughput in bytes per second (0 disables).
+	BandwidthLimit int64
 	// Force replaces existing destination files; for CopyTree it also merges
 	// into an existing destination directory.
 	Force bool
@@ -119,6 +124,46 @@ type Options struct {
 	protect string
 	// savedAs, when non-nil, receives the name of the backup this copy made.
 	savedAs *string
+}
+
+// ParseBandwidthLimit parses a byte-per-second rate such as "500K", "10M",
+// "1G" or a plain integer. "0" or empty disables rate limiting.
+func ParseBandwidthLimit(raw string) (int64, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+	upper := strings.ToUpper(s)
+	var mult int64 = 1
+	for _, unit := range []struct {
+		suffix string
+		factor int64
+	}{
+		{"GB", 1024 * 1024 * 1024},
+		{"MB", 1024 * 1024},
+		{"KB", 1024},
+		{"G", 1024 * 1024 * 1024},
+		{"M", 1024 * 1024},
+		{"K", 1024},
+		{"B", 1},
+	} {
+		if strings.HasSuffix(upper, unit.suffix) {
+			mult = unit.factor
+			s = strings.TrimSpace(s[:len(s)-len(unit.suffix)])
+			break
+		}
+	}
+	if s == "" || strings.HasPrefix(s, "-") {
+		return 0, fmt.Errorf("invalid bandwidth limit %q", raw)
+	}
+	val, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || val < 0 {
+		return 0, fmt.Errorf("invalid bandwidth limit %q", raw)
+	}
+	if val > 0 && val > (1<<63-1)/mult {
+		return 0, fmt.Errorf("bandwidth limit %q overflows int64", raw)
+	}
+	return val * mult, nil
 }
 
 func (o Options) replace() bool { return o.Force || o.BackupKeep > 0 }
@@ -207,9 +252,19 @@ func copyOrSkip(ctx context.Context, sourceFS, targetFS filesystem, source, targ
 			return 0, fmt.Errorf("destination is a directory: %s", target)
 		}
 		if existing.Mode().IsRegular() && existing.Size() == info.Size() && existing.Mode().Perm() == info.Mode().Perm() {
-			same, err := sameContent(ctx, in, targetFS, target)
-			if err != nil {
-				return 0, err
+			var same bool
+			if opts.Fast {
+				same = existing.ModTime().Truncate(time.Second).Equal(info.ModTime().Truncate(time.Second))
+			} else {
+				same, err = sameContent(ctx, in, targetFS, target)
+				if err != nil {
+					return 0, err
+				}
+				if !same {
+					if _, err := in.Seek(0, io.SeekStart); err != nil {
+						return 0, fmt.Errorf("rewind source: %w", err)
+					}
+				}
 			}
 			if same {
 				*unchanged = true
@@ -217,9 +272,6 @@ func copyOrSkip(ctx context.Context, sourceFS, targetFS filesystem, source, targ
 					progress(info.Size(), info.Size())
 				}
 				return 0, nil
-			}
-			if _, err := in.Seek(0, io.SeekStart); err != nil {
-				return 0, fmt.Errorf("rewind source: %w", err)
 			}
 		}
 	} else if !os.IsNotExist(statErr) {
@@ -250,6 +302,9 @@ func copyOrSkip(ctx context.Context, sourceFS, targetFS filesystem, source, targ
 	}
 	// Wrappers prevent io.Copy from invoking optimized methods that bypass the bounded buffer.
 	var reader io.Reader = contextReader{ctx, in}
+	if opts.BandwidthLimit > 0 {
+		reader = &rateLimitedReader{ctx: ctx, in: reader, limit: opts.BandwidthLimit}
+	}
 	if progress != nil {
 		reader = &progressReader{in: reader, total: info.Size(), cb: progress}
 	}
@@ -270,6 +325,11 @@ func copyOrSkip(ctx context.Context, sourceFS, targetFS filesystem, source, targ
 		return n, fmt.Errorf("close destination: %w", err)
 	}
 	outputClosed = true
+	if opts.PreserveTimes {
+		if err = targetFS.Chtimes(tmp, info.ModTime(), info.ModTime()); err != nil {
+			return n, fmt.Errorf("set destination timestamps: %w", err)
+		}
+	}
 	if err = ctx.Err(); err != nil {
 		return n, err
 	}
@@ -332,6 +392,20 @@ const backupPrefix, backupMarker = "bak.", ".bak-"
 
 // backupLayout is a fixed-width UTC timestamp, so names sort chronologically.
 const backupLayout = "20060102T150405.000000000Z"
+
+// isBackupFile reports whether name strictly matches bak.NAME.bak-TIMESTAMP.
+func isBackupFile(name string) bool {
+	rest, ok := strings.CutPrefix(name, backupPrefix)
+	if !ok {
+		return false
+	}
+	idx := strings.LastIndex(rest, backupMarker)
+	if idx <= 0 {
+		return false
+	}
+	_, err := time.Parse(backupLayout, rest[idx+len(backupMarker):])
+	return err == nil
+}
 
 // backup hard-links an existing regular target to a new timestamped name,
 // returned as saved, after pruning that file's oldest backups to keep-1. The
@@ -581,6 +655,12 @@ func (f filesystem) Chmod(p string, mode os.FileMode) error {
 	}
 	return f.client.Chmod(p, mode)
 }
+func (f filesystem) Chtimes(p string, atime, mtime time.Time) error {
+	if f.client == nil {
+		return os.Chtimes(p, atime, mtime)
+	}
+	return f.client.Chtimes(p, atime, mtime)
+}
 func (f filesystem) join(a, b string) string {
 	if f.client == nil {
 		return filepath.Join(a, b)
@@ -640,4 +720,37 @@ func (w contextWriter) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	return w.out.Write(p)
+}
+
+type rateLimitedReader struct {
+	ctx   context.Context
+	in    io.Reader
+	limit int64
+	start time.Time
+	read  int64
+}
+
+func (r *rateLimitedReader) Read(p []byte) (int, error) {
+	if r.start.IsZero() {
+		r.start = time.Now()
+	}
+	maxChunk := max(4096, int(r.limit/10))
+	if len(p) > maxChunk {
+		p = p[:maxChunk]
+	}
+	n, err := r.in.Read(p)
+	if n > 0 && r.limit > 0 {
+		r.read += int64(n)
+		expected := time.Duration((r.read/r.limit)*int64(time.Second) + ((r.read%r.limit)*int64(time.Second))/r.limit)
+		if wait := expected - time.Since(r.start); wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-r.ctx.Done():
+				timer.Stop()
+				return n, r.ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return n, err
 }

@@ -19,25 +19,28 @@ import (
 
 // Record contains copy metadata only; credentials and key contents must never be supplied.
 type Record struct {
-	ID          int64     `json:"id"`
-	Source      string    `json:"source"`
-	Destination string    `json:"destination"`
-	Cwd         string    `json:"cwd"`
-	ConfigPath  string    `json:"config_path"`
-	KnownHosts  string    `json:"known_hosts"`
-	KeyPath     string    `json:"key_path"`
-	Force       bool      `json:"force"`
-	Recursive   bool      `json:"recursive"`
-	Resume      bool      `json:"resume"`
-	Sync        bool      `json:"sync"`
-	Delete      bool      `json:"delete"`
-	BackupKeep  int       `json:"backup_keep"`
-	Exclude     []string  `json:"exclude"`
-	StartedAt   time.Time `json:"started_at"`
-	FinishedAt  time.Time `json:"finished_at"`
-	Status      string    `json:"status"`
-	Bytes       int64     `json:"bytes"`
-	Error       string    `json:"error"`
+	ID             int64     `json:"id"`
+	Source         string    `json:"source"`
+	Destination    string    `json:"destination"`
+	Cwd            string    `json:"cwd"`
+	ConfigPath     string    `json:"config_path"`
+	KnownHosts     string    `json:"known_hosts"`
+	KeyPath        string    `json:"key_path"`
+	Force          bool      `json:"force"`
+	Recursive      bool      `json:"recursive"`
+	Resume         bool      `json:"resume"`
+	PreserveTimes  bool      `json:"preserve_times"`
+	Fast           bool      `json:"fast"`
+	BandwidthLimit int64     `json:"bwlimit"`
+	Sync           bool      `json:"sync"`
+	Delete         bool      `json:"delete"`
+	BackupKeep     int       `json:"backup_keep"`
+	Exclude        []string  `json:"exclude"`
+	StartedAt      time.Time `json:"started_at"`
+	FinishedAt     time.Time `json:"finished_at"`
+	Status         string    `json:"status"`
+	Bytes          int64     `json:"bytes"`
+	Error          string    `json:"error"`
 }
 
 type Store struct{ db *sql.DB }
@@ -118,7 +121,7 @@ func addColumns(db *sql.DB) error {
 			return err
 		}
 	}
-	for _, column := range []string{"recursive", "backup_keep", "resume", "sync", "delete_extra"} {
+	for _, column := range []string{"recursive", "backup_keep", "resume", "sync", "delete_extra", "preserve_times", "fast", "bwlimit"} {
 		if !have[column] {
 			// Concurrent openers may race to add the column; losing is harmless.
 			if _, err := db.Exec(`ALTER TABLE copy_history ADD COLUMN ` + column + ` INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -141,8 +144,8 @@ func (s *Store) Begin(ctx context.Context, r Record) (int64, error) {
 		return 0, err
 	}
 	result, err := s.db.ExecContext(ctx, `INSERT INTO copy_history
-		(source,destination,cwd,config_path,known_hosts,key_path,force,recursive,backup_keep,started_at,status,search_paths,exclude_patterns,resume,sync,delete_extra)
-		VALUES (?,?,?,?,?,?,?,?,?,?,'running',?,?,?,?,?)`, r.Source, r.Destination, r.Cwd, r.ConfigPath, r.KnownHosts, r.KeyPath, r.Force, r.Recursive, r.BackupKeep, r.StartedAt.UnixNano(), strings.ToLower(r.Source+"\n"+r.Destination), string(patterns), r.Resume, r.Sync, r.Delete)
+		(source,destination,cwd,config_path,known_hosts,key_path,force,recursive,backup_keep,started_at,status,search_paths,exclude_patterns,resume,sync,delete_extra,preserve_times,fast,bwlimit)
+		VALUES (?,?,?,?,?,?,?,?,?,?,'running',?,?,?,?,?,?,?,?)`, r.Source, r.Destination, r.Cwd, r.ConfigPath, r.KnownHosts, r.KeyPath, r.Force, r.Recursive, r.BackupKeep, r.StartedAt.UnixNano(), strings.ToLower(r.Source+"\n"+r.Destination), string(patterns), r.Resume, r.Sync, r.Delete, r.PreserveTimes, r.Fast, r.BandwidthLimit)
 	if err != nil {
 		return 0, fmt.Errorf("record copy attempt: %w", err)
 	}
@@ -176,14 +179,14 @@ func (s *Store) Finish(ctx context.Context, id int64, bytes int64, status, error
 	return nil
 }
 
-const recordColumns = `id,source,destination,cwd,config_path,known_hosts,key_path,force,recursive,backup_keep,started_at,finished_at,status,bytes,error,exclude_patterns,resume,sync,delete_extra`
+const recordColumns = `id,source,destination,cwd,config_path,known_hosts,key_path,force,recursive,backup_keep,started_at,finished_at,status,bytes,error,exclude_patterns,resume,sync,delete_extra,preserve_times,fast,bwlimit`
 
 func scanRecord(row interface{ Scan(...any) error }) (Record, error) {
 	var r Record
 	var started int64
 	var finished sql.NullInt64
 	var patterns string
-	err := row.Scan(&r.ID, &r.Source, &r.Destination, &r.Cwd, &r.ConfigPath, &r.KnownHosts, &r.KeyPath, &r.Force, &r.Recursive, &r.BackupKeep, &started, &finished, &r.Status, &r.Bytes, &r.Error, &patterns, &r.Resume, &r.Sync, &r.Delete)
+	err := row.Scan(&r.ID, &r.Source, &r.Destination, &r.Cwd, &r.ConfigPath, &r.KnownHosts, &r.KeyPath, &r.Force, &r.Recursive, &r.BackupKeep, &started, &finished, &r.Status, &r.Bytes, &r.Error, &patterns, &r.Resume, &r.Sync, &r.Delete, &r.PreserveTimes, &r.Fast, &r.BandwidthLimit)
 	if err != nil {
 		return Record{}, err
 	}
