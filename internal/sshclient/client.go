@@ -238,6 +238,14 @@ func Dial(ctx context.Context, c config.Connection, opts Options) (*Client, erro
 			}
 			return nil, cause
 		}
+		var netErr net.Error
+		if ctx.Err() == nil && (errors.Is(err, os.ErrDeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout())) {
+			timeoutErr := fmt.Errorf("%s %s timed out after %s (increase --timeout): %w", handshakeStage, address, opts.Timeout, context.DeadlineExceeded)
+			if proxyDetail != "" {
+				timeoutErr = fmt.Errorf("%w (proxy command stderr: %s)", timeoutErr, proxyDetail)
+			}
+			return nil, timeoutErr
+		}
 		if proxyDetail != "" {
 			err = fmt.Errorf("%w (proxy command stderr: %s)", err, proxyDetail)
 		}
