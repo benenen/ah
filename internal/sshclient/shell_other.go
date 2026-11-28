@@ -15,3 +15,11 @@ func (c *Client) Shell(_ *os.File, _, _ io.Writer) error {
 func (c *Client) Exec(_ string, _ *os.File, _, _ io.Writer) error {
 	return fmt.Errorf("SSH command execution currently supports macOS and Linux")
 }
+
+func (c *Client) ExecPTY(_ string, _ int, _ *os.File, _, _ io.Writer) error {
+	return fmt.Errorf("SSH command execution currently supports macOS and Linux")
+}
+
+func (c *Client) ExecWithInput(_ string, _ io.Reader, _, _ io.Writer) error {
+	return fmt.Errorf("SSH command execution currently supports macOS and Linux")
+}

@@ -18,16 +18,29 @@ import (
 // Shell runs a remote shell, requesting a PTY only when stdin is a terminal.
 // It consumes the connection and closes its transport when the shell ends.
 func (c *Client) Shell(stdin *os.File, stdout, stderr io.Writer) error {
-	return c.runSession("", true, stdin, stdout, stderr)
+	return c.runSession("", true, 0, stdin, nil, stdout, stderr)
 }
 
 // Exec sends a command to the remote shell without requesting a PTY.
 // Like Shell, it consumes and closes the connection and stops pending input reads.
 func (c *Client) Exec(command string, stdin *os.File, stdout, stderr io.Writer) error {
-	return c.runSession(command, false, stdin, stdout, stderr)
+	return c.runSession(command, false, 0, stdin, nil, stdout, stderr)
 }
 
-func (c *Client) runSession(command string, interactive bool, stdin *os.File, stdout, stderr io.Writer) (result error) {
+// ExecPTY sends a command to the remote shell and allocates a PTY according to
+// ptyLevel: 1 (-t) requests a PTY only when stdin is a terminal, and >=2 (-tt)
+// forces PTY allocation even without a local terminal.
+func (c *Client) ExecPTY(command string, ptyLevel int, stdin *os.File, stdout, stderr io.Writer) error {
+	return c.runSession(command, false, ptyLevel, stdin, nil, stdout, stderr)
+}
+
+// ExecWithInput sends a command to the remote shell without a PTY, streaming
+// stdin from an arbitrary io.Reader (such as a script buffer).
+func (c *Client) ExecWithInput(command string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return c.runSession(command, false, 0, nil, stdin, stdout, stderr)
+}
+
+func (c *Client) runSession(command string, interactive bool, ptyLevel int, stdin *os.File, stdinReader io.Reader, stdout, stderr io.Writer) (result error) {
 	setupCtx := c.ctx
 	finishSetup := func() {}
 	if c.sudo {
@@ -45,7 +58,7 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 		return err
 	}
 	defer func() { _ = c.Close(); _ = session.Close() }()
-	if stdin != nil && !c.sudo {
+	if (stdin != nil || stdinReader != nil) && !c.sudo {
 		pipe, err := session.StdinPipe()
 		if err != nil {
 			return err
@@ -55,7 +68,11 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 		defer func() { close(stopInput); _ = c.Close(); <-inputDone }()
 		go func() {
 			defer close(inputDone)
-			_, _ = io.Copy(pipe, &shellInput{file: stdin, stop: stopInput})
+			if stdin != nil {
+				_, _ = io.Copy(pipe, &shellInput{file: stdin, stop: stopInput})
+			} else {
+				_, _ = io.Copy(pipe, stdinReader)
+			}
 			_ = pipe.Close()
 		}()
 	}
@@ -63,12 +80,9 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 		session.Stdout = stdout
 		session.Stderr = stderr
 	}
-	if interactive && stdin != nil && term.IsTerminal(int(stdin.Fd())) {
-		fd := int(stdin.Fd())
-		width, height, err := term.GetSize(fd)
-		if err != nil {
-			return err
-		}
+	isTTY := stdin != nil && term.IsTerminal(int(stdin.Fd()))
+	wantPTY := (interactive && isTTY) || (ptyLevel == 1 && isTTY) || ptyLevel >= 2
+	if wantPTY {
 		// A server whose terminfo lacks the local TERM degrades line editing, so
 		// the connection may pin a name the remote side is known to have.
 		terminal := c.term
@@ -78,9 +92,24 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 		if terminal == "" {
 			terminal = "xterm-256color"
 		}
-		// Read the local settings before MakeRaw so the remote PTY mirrors the
-		// real terminal; sudo keeps echo off until authentication finishes.
-		modes := terminalModes(fd)
+		width, height := 80, 24
+		modes := ssh.TerminalModes{
+			ssh.ECHO:          1,
+			ssh.TTY_OP_ISPEED: 14400,
+			ssh.TTY_OP_OSPEED: 14400,
+		}
+		var fd int
+		if isTTY {
+			fd = int(stdin.Fd())
+			var sizeErr error
+			width, height, sizeErr = term.GetSize(fd)
+			if sizeErr != nil {
+				return sizeErr
+			}
+			// Read the local settings before MakeRaw so the remote PTY mirrors the
+			// real terminal; sudo keeps echo off until authentication finishes.
+			modes = terminalModes(fd)
+		}
 		if c.sudo {
 			modes[ssh.ECHO] = 0
 		}
@@ -90,33 +119,35 @@ func (c *Client) runSession(command string, interactive bool, stdin *os.File, st
 			}
 			return err
 		}
-		state, err := term.MakeRaw(fd)
-		if err != nil {
-			return err
-		}
-		defer func() { result = errors.Join(result, term.Restore(fd, state)) }()
-		changes := make(chan os.Signal, 1)
-		signal.Notify(changes, syscall.SIGWINCH)
-		done := make(chan struct{})
-		exited := make(chan struct{})
-		defer func() { signal.Stop(changes); close(done); _ = c.Close(); <-exited }()
-		go func() {
-			defer close(exited)
-			for {
-				select {
-				case <-done:
-					return
-				case <-changes:
-					w, h, e := term.GetSize(fd)
-					if e == nil {
-						session.WindowChange(h, w)
+		if isTTY {
+			state, err := term.MakeRaw(fd)
+			if err != nil {
+				return err
+			}
+			defer func() { result = errors.Join(result, term.Restore(fd, state)) }()
+			changes := make(chan os.Signal, 1)
+			signal.Notify(changes, syscall.SIGWINCH)
+			done := make(chan struct{})
+			exited := make(chan struct{})
+			defer func() { signal.Stop(changes); close(done); _ = c.Close(); <-exited }()
+			go func() {
+				defer close(exited)
+				for {
+					select {
+					case <-done:
+						return
+					case <-changes:
+						w, h, e := term.GetSize(fd)
+						if e == nil {
+							session.WindowChange(h, w)
+						}
 					}
 				}
-			}
-		}()
+			}()
+		}
 	}
 	if c.sudo {
-		return c.runSudoSession(setupCtx, finishSetup, session, command, interactive, stdin, stdout, stderr)
+		return c.runSudoSession(setupCtx, finishSetup, session, command, interactive, wantPTY, stdin, stdinReader, stdout, stderr)
 	}
 	if interactive {
 		if command := interactiveCommand(c.shell, isWindowsServer(c.client.ServerVersion())); command != "" {
@@ -171,7 +202,7 @@ func (r *shellInput) Read(p []byte) (int, error) {
 	}
 }
 
-func (c *Client) runSudoSession(ctx context.Context, finishSetup func(), session *ssh.Session, command string, interactive bool, stdin *os.File, stdout, stderr io.Writer) error {
+func (c *Client) runSudoSession(ctx context.Context, finishSetup func(), session *ssh.Session, command string, interactive, wantPTY bool, stdin *os.File, stdinReader io.Reader, stdout, stderr io.Writer) error {
 	if stdout == nil {
 		stdout = io.Discard
 	}
@@ -189,7 +220,7 @@ func (c *Client) runSudoSession(ctx context.Context, finishSetup func(), session
 		q := shellQuote(shell)
 		action = `cd "$HOME"; if command -v ` + q + ` >/dev/null 2>&1; then exec ` + q + ` -l; else exec /bin/sh -l; fi`
 	}
-	stream, err := c.startSudo(ctx, session, action, stderr, interactive && stdin != nil && term.IsTerminal(int(stdin.Fd())))
+	stream, err := c.startSudo(ctx, session, action, stderr, wantPTY)
 	finishSetup()
 	if err != nil {
 		return err
@@ -201,6 +232,8 @@ func (c *Client) runSudoSession(ctx context.Context, finishSetup func(), session
 		defer close(inputDone)
 		if stdin != nil {
 			io.Copy(stream.input, &shellInput{file: stdin, stop: stopInput})
+		} else if stdinReader != nil {
+			io.Copy(stream.input, stdinReader)
 		}
 		stream.input.Close()
 	}()

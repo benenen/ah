@@ -69,7 +69,7 @@ func (a *app) pickCommand() *cobra.Command {
 		if name == "" {
 			return nil
 		}
-		return a.runConnect(cmd, []string{name})
+		return a.runConnect(cmd, []string{name}, 0)
 	}}
 	cmd.Flags().StringSliceVar(&tags, "tag", nil, "limit choices to connections carrying every tag (repeatable or comma-separated)")
 	_ = cmd.RegisterFlagCompletionFunc("tag", a.completeTags(false))

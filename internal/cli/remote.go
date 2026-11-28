@@ -41,16 +41,18 @@ func (a *app) sshOptions(cmd *cobra.Command) sshclient.Options {
 	return opts
 }
 func (a *app) connectCommand() *cobra.Command {
+	var ptyCount int
 	cmd := &cobra.Command{Use: "connect NAME [COMMAND [ARG...]]", Aliases: []string{"c"}, Short: "Open an SSH shell or execute a remote command", Args: cobra.MinimumNArgs(1), ValidArgsFunction: a.completeNames, RunE: func(cmd *cobra.Command, args []string) error {
-		return a.runConnect(cmd, args)
+		return a.runConnect(cmd, args, ptyCount)
 	}}
+	cmd.Flags().CountVarP(&ptyCount, "tty", "t", "force pseudo-terminal allocation for remote commands (repeat as -tt to force without a local terminal)")
 	// Options following NAME belong to the remote command, even if they match ah flags.
 	cmd.Flags().SetInterspersed(false)
 	return cmd
 }
 
 // runConnect is shared by explicit connections and the interactive picker.
-func (a *app) runConnect(cmd *cobra.Command, args []string) (err error) {
+func (a *app) runConnect(cmd *cobra.Command, args []string, ptyCount int) (err error) {
 	input, ok := cmd.InOrStdin().(*os.File)
 	if !ok {
 		return fmt.Errorf("connect requires terminal input")
@@ -66,7 +68,15 @@ func (a *app) runConnect(cmd *cobra.Command, args []string) (err error) {
 	defer func() { err = errors.Join(err, client.Close()) }()
 	if len(args) > 1 {
 		// OpenSSH sends a space-joined command for the remote shell to parse.
-		return client.Exec(strings.Join(args[1:], " "), input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		command := strings.Join(args[1:], " ")
+		if ptyCount > 0 {
+			if ptyCount == 1 && !term.IsTerminal(int(input.Fd())) {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Pseudo-terminal will not be allocated because stdin is not a terminal.")
+				return client.Exec(command, input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			}
+			return client.ExecPTY(command, ptyCount, input, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		}
+		return client.Exec(command, input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	}
 	return client.Shell(input, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
